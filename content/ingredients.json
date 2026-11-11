@@ -1,0 +1,14 @@
+[
+  { "slug": "leite-condensado", "name": "Leite condensado", "category": "laticinios" },
+  { "slug": "creme-de-leite-uht", "name": "Creme de leite (caixinha)", "category": "laticinios" },
+  { "slug": "creme-de-leite-fresco", "name": "Creme de leite fresco", "category": "laticinios" },
+  { "slug": "leite", "name": "Leite", "category": "laticinios" },
+  { "slug": "chocolate-em-po", "name": "Chocolate em pó", "category": "mercearia" },
+  { "slug": "acucar-refinado", "name": "Açúcar refinado", "category": "mercearia" },
+  { "slug": "bolacha-champanhe", "name": "Bolacha champanhe", "category": "mercearia" },
+  { "slug": "cerejas-em-calda", "name": "Cerejas em calda", "category": "mercearia" },
+  { "slug": "cerejas-frescas", "name": "Cerejas frescas", "category": "hortifruti" },
+  { "slug": "granule", "name": "Granulé", "category": "confeitaria" },
+  { "slug": "brigadeiros", "name": "Brigadeiros", "category": "confeitaria" },
+  { "slug": "agua", "name": "Água", "category": "despensa", "is_shoppable": false }
+]

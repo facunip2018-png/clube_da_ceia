@@ -1,0 +1,23 @@
+{
+  "collection": "rabanadas-recheadas",
+  "document": "rabanadas-recheadas-dcc-2021",
+  "status": "pending_permission",
+  "page_ref_origin": "Levantamento do MVP — confirmar no PDF",
+  "entries": [
+    { "title": "Pão para Rabanada Doce", "page": 8, "kind": "component", "role": "base", "flavor": "doce" },
+    { "title": "Pão para Rabanada Salgada", "page": 9, "kind": "component", "role": "base", "flavor": "salgado" },
+    { "title": "Preparação da Calda", "page": null, "kind": "component", "role": "calda", "note": "Componente citado no escopo do projeto; página a confirmar no PDF." },
+    { "title": "Processo de Fritura", "page": null, "kind": "component", "role": "fritura", "note": "Componente citado no escopo do projeto; página a confirmar no PDF." },
+    { "title": "Rabanada Doce Recheada com Nutella", "page": 14, "kind": "variation", "role": "recheio", "flavor": "doce" },
+    { "title": "Rabanada Doce Recheada com Doce de Leite", "page": 15, "kind": "variation", "role": "recheio", "flavor": "doce" },
+    { "title": "Rabanada Doce com Brigadeiro de Nozes", "page": 16, "kind": "variation", "role": "recheio", "flavor": "doce" },
+    { "title": "Rabanada Salgada com Gorgonzola, Nozes e Damasco", "page": 18, "kind": "variation", "role": "recheio", "flavor": "salgado" },
+    { "title": "Rabanada Salgada com Salame e Ricota", "page": 20, "kind": "variation", "role": "recheio", "flavor": "salgado" },
+    { "title": "Rabanada Salgada com Peito de Peru e Queijo", "page": 22, "kind": "variation", "role": "recheio", "flavor": "salgado" }
+  ],
+  "compatibilities": {
+    "rule": "same_flavor",
+    "verified": false,
+    "note": "Combinações inferidas dos títulos do material (base doce com recheios doces; base salgada com recheios salgados). Confirmar no PDF, inclusive as finalizações, antes de liberar o montador."
+  }
+}

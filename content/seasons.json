@@ -1,0 +1,15 @@
+[
+  {
+    "slug": "natal-ano-novo-2026",
+    "name": "Natal & Ano-Novo 2026",
+    "description": "Coleções especiais para preparar, organizar e celebrar.",
+    "status": "draft",
+    "price_cents": null,
+    "currency": "BRL",
+    "sales_starts_at": "2026-11-01T03:00:00Z",
+    "sales_ends_at": "2027-01-01T02:59:59Z",
+    "access_starts_at": "2026-11-01T03:00:00Z",
+    "access_ends_at": "2027-02-01T02:59:59Z",
+    "admin_notice": "Datas sugeridas (horário de Brasília) e preço NÃO definidos pelo projeto: ajuste no painel administrativo e mude a situação para “ativa” para abrir vendas e acesso."
+  }
+]

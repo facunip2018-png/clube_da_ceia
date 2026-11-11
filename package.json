@@ -1,0 +1,41 @@
+{
+  "name": "clube-da-ceia-perfeita",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Clube da Ceia Perfeita — Natal & Ano-Novo. Catálogo gastronômico, planejador de ceia, lista de compras, modo cozinheiro, Chef IA e painel administrativo.",
+  "engines": {
+    "node": ">=20.9"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:db": "vitest run tests/db",
+    "db:conferir": "vitest run tests/db/conferencia-hospedado.test.ts",
+    "test:hosted": "node tests/hosted/smoke.mjs",
+    "content:build": "node scripts/content-build.mjs",
+    "content:check": "node scripts/content-build.mjs --check",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.119.0",
+    "lucide-react": "^1.70.0",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "swr": "^2.5.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16",
+    "@types/node": "^20.19.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "sharp": "^0.35.5",
+    "typescript": "5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

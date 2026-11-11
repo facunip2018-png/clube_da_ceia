@@ -1,0 +1,22 @@
+{
+  "collection": "paves",
+  "document": "recetario-gourmet-paves",
+  "kind": "recipe",
+  "status": "draft",
+  "original_language": "es",
+  "translation_status": "pending",
+  "page_ref_origin": "Índice informado no MVP — confirmar no PDF",
+  "entries": [
+    { "title": "Pavê de Chocolate", "page": 3 },
+    { "title": "Pavê de Chocolate BIS", "page": 5 },
+    { "title": "Pavê de Limão", "page": 6 },
+    { "title": "Pavê de Pêssego", "page": 7 },
+    { "title": "Pavê de Abacaxi", "page": 9 },
+    { "title": "Pavê de Maracujá e Chocolate", "page": 10 },
+    { "title": "Pavê de Uva, Chocolate e Chantilly", "page": 11 },
+    { "title": "Pavê de Amendoim", "page": 13 },
+    { "title": "Pavê de Ameixa", "page": 14 },
+    { "title": "Pavê de Café", "page": 15 },
+    { "title": "Pavê de Chocolate Branco", "page": 16 }
+  ]
+}

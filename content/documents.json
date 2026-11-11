@@ -1,0 +1,86 @@
+[
+  {
+    "slug": "panetones-chocotones-natal",
+    "collection": "panetones-chocotones",
+    "title": "Receitas criativas de panetones e chocotones para o Natal",
+    "file_name": "receitas-criativas-de-panetones-e-chocotones-para-o-natal.pdf",
+    "language": "pt-BR",
+    "file_status": "awaiting_upload",
+    "commercial_permission": "unknown",
+    "import_notes": "PDF ainda não anexado a esta base. O sumário identifica 25 preparações (lista e páginas vindas do MVP, a confirmar no PDF). O material traz também dicas, utensílios, massas, esponjas, recheios, coberturas e montagens: cada preparação deve ter ficha própria ligada aos componentes compartilhados."
+  },
+  {
+    "slug": "rabanadas-recheadas-dcc-2021",
+    "collection": "rabanadas-recheadas",
+    "title": "Rabanadas Recheadas D&CC (2021)",
+    "file_name": "rabanadas-recheadas-d-amp-cc-2021.pdf",
+    "language": "pt-BR",
+    "file_status": "awaiting_upload",
+    "commercial_permission": "restricted",
+    "permission_notes": "Segundo o levantamento do MVP, o próprio PDF informa restrições de reprodução, cópia, alteração e distribuição comercial sem autorização prévia. Não publicar ingredientes ou etapas sem licença confirmada.",
+    "import_notes": "PDF ainda não anexado a esta base. Estruturar como experiência \"Monte sua Rabanada\": bases (pão doce/salgado), calda, fritura, recheios doces e salgados e finalizações, respeitando as combinações do material. Criar fichas de componentes e receitas combinadas somente depois de analisar o documento completo."
+  },
+  {
+    "slug": "recetario-gourmet-paves",
+    "collection": "paves",
+    "title": "Recetario Gourmet — 11 recetas de pavê",
+    "file_name": "11-receta-de-pave-completo-y-revisado.pdf",
+    "language": "es",
+    "file_status": "awaiting_upload",
+    "commercial_permission": "unknown",
+    "import_notes": "PDF ainda não anexado a esta base. Possui partes em espanhol: traduzir títulos, ingredientes e instruções para pt-BR mantendo a referência ao texto original e encaminhar a tradução para revisão administrativa. Não converter medidas automaticamente sem validação."
+  },
+  {
+    "slug": "pave-floresta-negra-valeria-ribeiro",
+    "collection": "paves",
+    "title": "Pavê Floresta Negra",
+    "author": "Valéria Ribeiro",
+    "publisher": "Dona Lú Doces — confeitaria artesanal",
+    "file_name": "receita-de-pave-floresta-negra-com-creme-danete-uma-sobremesa-natalina-leve-e-saborosa.pdf",
+    "language": "pt-BR",
+    "file_status": "received",
+    "page_count": 11,
+    "sha256": "1d7d5bac78cc1026bd98f8b1a4b158f25532dd02c2a33b9376b13a377c98e2f2",
+    "commercial_permission": "unknown",
+    "permission_notes": "O PDF identifica a autora (Valéria Ribeiro) e a marca (Dona Lú Doces) e não traz termo de licença de uso. Confirme a permissão comercial antes de publicar a ficha.",
+    "import_notes": "Importado em 10/11/2026 a partir do PDF anexado (11 páginas, texto extraído e conferido visualmente página a página; a página 7 contém apenas fotografia). As referências usam a página física do arquivo.",
+    "toc": [
+      { "title": "Creme Danete", "printed_page": 4, "pdf_page": 4 },
+      { "title": "Ingredientes Montagem", "printed_page": 5, "pdf_page": 6 },
+      { "title": "Montagem", "printed_page": 7, "pdf_page": 8 },
+      { "title": "Marcas que usamos", "printed_page": 8, "pdf_page": 9 },
+      { "title": "Embalagem", "printed_page": 9, "pdf_page": 10 }
+    ]
+  },
+  {
+    "slug": "tortas-doces",
+    "collection": "tortas-doces",
+    "title": "Apostila de Tortas Doces",
+    "file_name": "tortas-doces.pdf",
+    "language": "pt-BR",
+    "file_status": "awaiting_upload",
+    "commercial_permission": "unknown",
+    "measurement_notes": "Neste material, 1 xícara = 240 ml.",
+    "import_notes": "PDF ainda não anexado a esta base. O índice identifica 15 preparações (lista e páginas vindas do MVP, a confirmar no PDF). Preservar as medidas originais, inclusive xícaras de 240 ml. Quando houver massa, recheio e cobertura, organizar as partes separadamente."
+  },
+  {
+    "slug": "manjar-de-coco",
+    "collection": "manjar-de-coco",
+    "title": "Manjar de Coco (material a receber)",
+    "file_name": null,
+    "language": "pt-BR",
+    "file_status": "not_provided",
+    "commercial_permission": "unknown",
+    "import_notes": "PDF ainda não enviado. Não inventar receitas nem quantidades."
+  },
+  {
+    "slug": "pudim-de-leite-condensado",
+    "collection": "pudins",
+    "title": "Pudim de Leite Condensado (material a receber)",
+    "file_name": null,
+    "language": "pt-BR",
+    "file_status": "not_provided",
+    "commercial_permission": "unknown",
+    "import_notes": "PDF ainda não enviado. Não inventar receitas nem quantidades."
+  }
+]

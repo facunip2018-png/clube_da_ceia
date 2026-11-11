@@ -1,0 +1,31 @@
+# dependências e builds
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# ambiente — NUNCA versionar chaves
+.env
+.env.*
+!.env.example
+
+# PDFs originais: ficam somente no bucket privado do Supabase (source-documents)
+content/sources/
+*.pdf
+
+# sistema
+.DS_Store
+.vercel
+npm-debug.log*
+
+# builds de verificação
+.next-*/
+
+# arquivos gerados para conferência do banco hospedado / Supabase CLI
+supabase/.temp/
+
+# Python (testes de navegador)
+__pycache__/
+*.pyc

@@ -1,0 +1,56 @@
+[
+  {
+    "slug": "panetones-chocotones",
+    "name": "Panetones & Chocotones",
+    "description": "Massas tradicionais, versões recheadas, trufadas e coberturas para a temporada de Natal.",
+    "cover_image": "/images/col-panetones.jpg",
+    "experience": "catalog",
+    "position": 1,
+    "admin_notice": "O PDF contém receitas de massas, esponjas, recheios, coberturas, montagem, utensílios e dicas. Cada preparação deve ter ficha própria, relacionada aos componentes compartilhados (massa, esponja, recheio, cobertura)."
+  },
+  {
+    "slug": "rabanadas-recheadas",
+    "name": "Rabanadas Recheadas",
+    "description": "Monte a sua: escolha a base, o recheio e a finalização entre versões doces e salgadas.",
+    "cover_image": "/images/col-rabanadas.jpg",
+    "experience": "builder",
+    "position": 2,
+    "admin_notice": "Segundo o levantamento do MVP, o próprio PDF informa restrições de reprodução, cópia, alteração e distribuição comercial sem autorização prévia. As fichas ficam bloqueadas (pending_permission) até a licença ser confirmada."
+  },
+  {
+    "slug": "paves",
+    "name": "Pavês",
+    "description": "Clássicos e combinações de chocolate, frutas, café e cremes para servir gelados.",
+    "cover_image": "/images/col-paves.jpg",
+    "experience": "catalog",
+    "position": 3,
+    "admin_notice": "A coleção reúne onze receitas do Recetario Gourmet (com partes em espanhol, tradução sujeita a revisão) e o Pavê Floresta Negra, de um PDF separado."
+  },
+  {
+    "slug": "tortas-doces",
+    "name": "Tortas Doces",
+    "description": "Tortas para diferentes gostos, com opções cremosas, frutadas, de chocolate e nozes.",
+    "cover_image": "/images/col-tortas.jpg",
+    "experience": "catalog",
+    "position": 4,
+    "admin_notice": "O material usa xícara de 240 ml como medida principal. Preservar as medidas originais e separar massa, recheio e cobertura na ficha."
+  },
+  {
+    "slug": "manjar-de-coco",
+    "name": "Manjar de Coco",
+    "description": "A sobremesa clássica de coco, em breve no seu caderno.",
+    "cover_image": "/images/col-manjar.jpg",
+    "experience": "catalog",
+    "position": 5,
+    "admin_notice": "PDF ainda não recebido. Coleção preparada, sem receitas cadastradas. Não inventar receitas nem quantidades."
+  },
+  {
+    "slug": "pudins",
+    "name": "Pudins",
+    "description": "O pudim de leite condensado e futuras variações, em breve no seu caderno.",
+    "cover_image": "/images/col-pudins.jpg",
+    "experience": "catalog",
+    "position": 6,
+    "admin_notice": "PDF do Pudim de Leite Condensado ainda não recebido. Coleção preparada, sem receitas cadastradas. Não inventar receitas nem quantidades."
+  }
+]

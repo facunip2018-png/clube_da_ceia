@@ -1,0 +1,394 @@
+{
+  "slug": "pave-floresta-negra-com-creme-danete",
+  "title": "Pavê Floresta Negra com Creme Danete",
+  "original_title": "PAVÊ FLORESTA NEGRA",
+  "collection": "paves",
+  "document": "pave-floresta-negra-valeria-ribeiro",
+  "kind": "recipe",
+  "status": "review",
+  "language": "pt-BR",
+  "position": 12,
+  "is_featured": true,
+  "cover_image": "/images/rec-pave-floresta-negra.jpg",
+  "description": "Sobremesa leve e saborosa para o cardápio de Natal. Na montagem vão bolacha champanhe, creme de leite fresco, cerejas em calda e o creme danete, com finalização de granulé, brigadeiros e cerejas frescas.",
+  "difficulty": null,
+  "yield": {
+    "quantity": 1,
+    "unit": "travessa",
+    "unit_plural": "travessas",
+    "detail": "27 × 17 cm",
+    "text": "1 travessa de 27 × 17 cm",
+    "page": 8
+  },
+  "servings": null,
+  "times": {
+    "prep_minutes": null,
+    "cook_minutes": null,
+    "bake_minutes": null,
+    "chill_minutes": 360,
+    "chill_is_minimum": true,
+    "rest_minutes": null
+  },
+  "source_pages": { "start": 4, "end": 8, "extra": [3, 9, 10] },
+  "page_ref_verified": true,
+  "tags": ["natal", "chocolate", "cereja"],
+  "equipment": [
+    { "name": "Panela de fundo grosso", "page": 5 },
+    { "name": "Vasilha", "page": 5 },
+    { "name": "Plástico filme", "page": 5 },
+    { "name": "Batedeira", "page": 6 },
+    { "name": "Travessa de 27 × 17 cm", "page": 8 }
+  ],
+  "components": [
+    {
+      "key": "creme-danete",
+      "role": "creme",
+      "title": "Creme Danete",
+      "original_title": "CREME DANETE",
+      "pages": [4, 5],
+      "ingredients": [
+        {
+          "key": "leite-condensado",
+          "ingredient": "leite-condensado",
+          "name": "leite condensado",
+          "quantity": 600,
+          "unit": "g",
+          "household_note": "1 lata e meia",
+          "scaling": "linear",
+          "original": "600g de leite condensado (1 lata e meia)",
+          "page": 4
+        },
+        {
+          "key": "creme-de-leite",
+          "ingredient": "creme-de-leite-uht",
+          "name": "creme de leite",
+          "quantity": 400,
+          "unit": "g",
+          "household_note": "2 caixinhas",
+          "scaling": "linear",
+          "original": "400g de creme de leite (2 caixinha)",
+          "page": 4
+        },
+        {
+          "key": "chocolate-em-po",
+          "ingredient": "chocolate-em-po",
+          "name": "chocolate em pó",
+          "quantity": 100,
+          "unit": "g",
+          "scaling": "linear",
+          "original": "100g chocolate em pó",
+          "page": 4
+        },
+        {
+          "key": "agua",
+          "ingredient": "agua",
+          "name": "água",
+          "quantity": 75,
+          "unit": "ml",
+          "preparation": "para diluir o chocolate",
+          "scaling": "linear",
+          "original": "75ml de água para diluir o chocolate",
+          "page": 4
+        }
+      ],
+      "steps": [
+        {
+          "text": "Dilua o chocolate em pó na água.",
+          "original": "1 - Dilua o chocolate em pó na água.",
+          "page": 5,
+          "uses": ["chocolate-em-po", "agua"]
+        },
+        {
+          "text": "Junte todos os ingredientes em uma panela de fundo grosso e misture bem.",
+          "original": "2 - Junte todos os ingredientes um uma panela de fundo grosso e misture bem.",
+          "page": 5,
+          "uses": ["leite-condensado", "creme-de-leite", "chocolate-em-po", "agua"],
+          "flag": { "severity": "info", "message": "Grafia original “um uma panela” normalizada para “em uma panela”." }
+        },
+        {
+          "text": "Leve ao fogo e mexa até ferver, depois que ferver mexa por mais 4 minutos e retire do fogo.",
+          "original": "3 - Leve ao fogo e mexa até ferver, depois que ferver mexa por mais 4 minutos e retire do fogo.",
+          "page": 5,
+          "timers": [
+            {
+              "label": "Mexer após ferver",
+              "seconds": 240,
+              "kind": "cook",
+              "original": "depois que ferver mexa por mais 4 minutos"
+            }
+          ]
+        },
+        {
+          "text": "Transfira para uma vasilha, coloque um plástico filme em contato direto com creme e leve para gelar por pelo menos 6h.",
+          "original": "4 - Transfira para uma vasilha, coloque um plástico filme em contato direto com creme e leve para gelar por pelo menos 6h.",
+          "page": 5,
+          "timers": [
+            {
+              "label": "Geladeira — creme danete",
+              "seconds": 21600,
+              "kind": "chill",
+              "is_minimum": true,
+              "original": "leve para gelar por pelo menos 6h",
+              "flag": { "severity": "info", "message": "Tempo mínimo no original (“pelo menos 6h”). O temporizador usa 6 h como referência mínima." }
+            }
+          ]
+        },
+        {
+          "text": "Utilize depois de frio na montagem do pavê.",
+          "original": "5 - Utilize depois de frio na montagem do pavê.",
+          "page": 5
+        }
+      ]
+    },
+    {
+      "key": "preparo-montagem",
+      "role": "recheio",
+      "title": "Preparo para a montagem",
+      "original_title": "INGREDIENTES PARA MONTAGEM",
+      "description": "Chantilly com cerejas e pré-preparo dos ingredientes da montagem.",
+      "pages": [6, 6],
+      "ingredients": [
+        {
+          "key": "bolacha-champanhe",
+          "ingredient": "bolacha-champanhe",
+          "name": "bolacha champanhe",
+          "quantity": 1,
+          "unit": "pacote",
+          "scaling": "manual",
+          "original": "1 pacote de bolacha champanhe",
+          "page": 6,
+          "flag": { "severity": "warning", "message": "“1 pacote” — o peso do pacote não é informado no material. O ajuste de porções não converte pacotes automaticamente; valide a quantidade." }
+        },
+        {
+          "key": "creme-de-leite-fresco",
+          "ingredient": "creme-de-leite-fresco",
+          "name": "creme de leite fresco",
+          "quantity": 300,
+          "unit": "ml",
+          "scaling": "linear",
+          "original": "300ml de creme de leite fresco",
+          "page": 6
+        },
+        {
+          "key": "acucar-refinado",
+          "ingredient": "acucar-refinado",
+          "name": "açúcar refinado",
+          "quantity": 30,
+          "unit": "g",
+          "scaling": "linear",
+          "original": "30g de açúcar refinado",
+          "page": 6
+        },
+        {
+          "key": "cerejas-em-calda",
+          "ingredient": "cerejas-em-calda",
+          "name": "cerejas em calda",
+          "quantity": 200,
+          "unit": "g",
+          "scaling": "linear",
+          "original": "200g de cerejas em calda",
+          "page": 6
+        },
+        {
+          "key": "cerejas-frescas",
+          "ingredient": "cerejas-frescas",
+          "name": "cerejas frescas",
+          "quantity": 50,
+          "unit": "g",
+          "preparation": "para decorar",
+          "scaling": "linear",
+          "original": "50g de cerjas frescas para decorar",
+          "page": 6,
+          "flag": { "severity": "info", "message": "Grafia original “cerjas” normalizada para “cerejas”." }
+        },
+        {
+          "key": "leite",
+          "ingredient": "leite",
+          "name": "leite",
+          "quantity": 500,
+          "unit": "ml",
+          "preparation": "para umedecer as bolachas",
+          "scaling": "linear",
+          "original": "500ml de leite para umedecer  as bolachas",
+          "page": 6
+        }
+      ],
+      "steps": [
+        {
+          "text": "Reserve a bolacha champanhe.",
+          "original": "1. Reserve a bolacha champanhe",
+          "page": 6,
+          "uses": ["bolacha-champanhe"]
+        },
+        {
+          "text": "Higienize as cerejas frescas.",
+          "original": "2. Higienize as cerejas frescas",
+          "page": 6,
+          "uses": ["cerejas-frescas"]
+        },
+        {
+          "text": "Pique as cerejas em calda em 4 partes. Reserve algumas inteiras para cortar ao meio e decorar a parede da travessa.",
+          "original": "3. Pique as cerejas em calda em 4 partes. Reserve algumas inteiras para cortar ao meio e decorar a parede da travessa",
+          "page": 6,
+          "uses": ["cerejas-em-calda"]
+        },
+        {
+          "text": "Na batedeira coloque o creme de leite fresco com o açúcar refinado, misture e bata até formar chantilly.",
+          "original": "4. Na batedeira coloque o creme de leite fresco com o áçucar refinado, misture e bata até formar chantilly",
+          "page": 6,
+          "uses": ["creme-de-leite-fresco", "acucar-refinado"],
+          "flag": { "severity": "info", "message": "Grafia original “áçucar” normalizada para “açúcar”." }
+        },
+        {
+          "text": "Junte as cerejas picadas com chantilly e misture. Reserve para a montagem.",
+          "original": "5. Junte as cerejas picadas com chantilly e misture. Reserve para a montagem",
+          "page": 6,
+          "uses": ["cerejas-em-calda"]
+        }
+      ]
+    },
+    {
+      "key": "montagem",
+      "role": "montagem",
+      "title": "Montagem",
+      "original_title": "MONTAGEM",
+      "description": "Monte as camadas do pavê seguindo a sequência abaixo.",
+      "pages": [8, 8],
+      "flag": { "severity": "info", "message": "As camadas da página 8 foram rotuladas como “1ª camada … 5ª camada” para o modo cozinheiro. O texto original de cada item está preservado." },
+      "ingredients": [
+        {
+          "key": "granule",
+          "ingredient": "granule",
+          "name": "granulé",
+          "quantity": null,
+          "unit": null,
+          "quantity_text": "quantidade não informada",
+          "scaling": "fixed",
+          "original": "Finalize com granullé, brigadeiros e cerejas frescas",
+          "page": 8,
+          "flag": { "severity": "warning", "message": "Quantidade não informada no material (p. 8). Grafia original “granullé” normalizada para “granulé”. Defina “a gosto” ou informe a quantidade após validação." }
+        },
+        {
+          "key": "brigadeiros",
+          "ingredient": "brigadeiros",
+          "name": "brigadeiros",
+          "quantity": null,
+          "unit": null,
+          "quantity_text": "quantidade não informada",
+          "scaling": "fixed",
+          "original": "Finalize com granullé, brigadeiros e cerejas frescas",
+          "page": 8,
+          "flag": { "severity": "warning", "message": "Quantidade não informada e o material não traz a receita dos brigadeiros usados na finalização (p. 8)." }
+        }
+      ],
+      "steps": [
+        {
+          "text": "1ª camada: creme danete.",
+          "original": "1. Creme danete",
+          "page": 8,
+          "uses_components": ["creme-danete"]
+        },
+        {
+          "text": "2ª camada: bolachas champanhe umedecidas no leite.",
+          "original": "2. Bolachas champanhe umedecidas no leite",
+          "page": 8,
+          "uses": ["preparo-montagem/bolacha-champanhe", "preparo-montagem/leite"]
+        },
+        {
+          "text": "3ª camada: chantilly com cerejas.",
+          "original": "3. Chantilly com cerejas",
+          "page": 8,
+          "uses_components": ["preparo-montagem"]
+        },
+        {
+          "text": "4ª camada: bolachas champanhe umedecidas no leite.",
+          "original": "4. Bolachas champanhe umedecidas no leite",
+          "page": 8,
+          "uses": ["preparo-montagem/bolacha-champanhe", "preparo-montagem/leite"]
+        },
+        {
+          "text": "5ª camada: creme danete.",
+          "original": "5. Creme danete",
+          "page": 8,
+          "uses_components": ["creme-danete"]
+        },
+        {
+          "text": "Finalize com granulé, brigadeiros e cerejas frescas.",
+          "original": "6. Finalize com granullé, brigadeiros e cerejas frescas",
+          "page": 8,
+          "uses": ["granule", "brigadeiros", "preparo-montagem/cerejas-frescas"]
+        }
+      ]
+    }
+  ],
+  "tips": [
+    {
+      "text": "Esta receita foi calculada para uma travessa de 27x17cm, mas você pode fazer a montagem em qualquer travessa que preferir.",
+      "original": "Esta receita foi calculada para uma travessa de 27x17cm, mas você pode fazer a montagem em qualquer travessa que preferir.",
+      "page": 8
+    },
+    {
+      "text": "O creme danete é super versátil, você pode criar outras preparações a partir dele. Esse creme fica maravilhoso para bolo no pote, copos da felicidade, recheio de trufas e tantas outras sobremesas que sua criatividade permitir.",
+      "original": "O creme danete é super versátil, você pode criar outras preparações a partir dele. Esse creme fica maravilho para bolo no pote, copos da felicidade, recheio de trufas e tantas outras sobremesas que sua criatividade permitir.",
+      "page": 3
+    }
+  ],
+  "notes": [
+    {
+      "title": "Marcas usadas pela autora",
+      "text": "Leite condensado: Itambé · Creme de leite UHT: Itambé · Creme de leite fresco: Fazenda · Bolacha champanhe: Bauducco · Cerejas: Qualitá.",
+      "original": "Leite condensado - Itambé / Creme de leite uht - Itambé / Creme de leite fresco - Fazenda / Bolacha champanhe - Bauduco / Cerejas - Qualitá",
+      "page": 9,
+      "flag": { "severity": "info", "message": "Grafia original “Bauduco” normalizada para “Bauducco”." }
+    },
+    {
+      "title": "Embalagem",
+      "text": "Empresa Três Triângulos — Ref.: Travessa Cristal 170x270mm, PA0018.",
+      "original": "EMPRESA TRÊS TRIÂNGULOS / Ref: Travessa Cristal 170x270mm / PA0018",
+      "page": 10
+    }
+  ],
+  "flags": [
+    {
+      "field": "servings",
+      "severity": "warning",
+      "page": 8,
+      "message": "O material informa o rendimento apenas como “uma travessa de 27x17cm”. O número de porções não é informado: a calculadora trabalha por número de travessas até que as porções sejam validadas por um administrador."
+    },
+    {
+      "field": "difficulty",
+      "severity": "info",
+      "message": "Dificuldade não informada no material. Defina após validação editorial."
+    },
+    {
+      "field": "prep_minutes",
+      "severity": "info",
+      "page": 5,
+      "message": "Tempo total de preparo não informado. O material traz apenas: 4 minutos de fogo após ferver e mínimo de 6 h de geladeira para o creme danete."
+    },
+    {
+      "field": "source_pages",
+      "severity": "warning",
+      "page": 2,
+      "message": "O índice do PDF indica: Creme Danete 04, Ingredientes Montagem 05, Montagem 07, Marcas 08, Embalagem 09. As páginas físicas do arquivo são 4–5, 6, 8, 9 e 10. As referências desta ficha usam as páginas físicas."
+    },
+    {
+      "field": "description",
+      "severity": "info",
+      "page": 3,
+      "message": "Descrição editorial adaptada da introdução da autora (p. 3). O texto original não foi reproduzido integralmente."
+    },
+    {
+      "field": "ingredients.leite-condensado",
+      "severity": "info",
+      "page": 4,
+      "message": "A equivalência caseira original “(1 lata e meia)” é mantida como observação e não é recalculada ao ajustar porções."
+    },
+    {
+      "field": "ingredients.creme-de-leite",
+      "severity": "info",
+      "page": 4,
+      "message": "Original: “400g de creme de leite (2 caixinha)”. A página 9 lista a marca como “Creme de leite uht”. Cadastrado separadamente do “creme de leite fresco” para não somar na lista de compras."
+    }
+  ]
+}

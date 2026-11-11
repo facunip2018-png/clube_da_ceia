@@ -1,0 +1,588 @@
+# PROMPT MESTRE — CLUBE DA CEIA PERFEITA
+
+Quero transformar o projeto atual em uma aplicação web profissional, responsiva e instalável como PWA, chamada:
+
+**CLUBE DA CEIA PERFEITA — NATAL & ANO-NOVO**
+
+Este projeto já possui um MVP visual em HTML. Utilize o arquivo `clube_da_ceia_perfeita_mvp_v2.html` como referência principal de design, identidade visual, organização e experiência do usuário.
+
+**NÃO RECRIE O PROJETO DO ZERO. NÃO DESCARTE O DESIGN EXISTENTE.** Aproveite a estrutura visual já desenvolvida e evolua o aplicativo para uma plataforma funcional.
+
+---
+
+## 1. IDENTIDADE VISUAL
+
+Preserve a identidade premium já definida:
+
+- Verde-floresta: #173D2C.
+- Verde secundário: #24543D.
+- Dourado: #C5A15B.
+- Fundo branco quente: #FAF9F5.
+- Texto: #242B26.
+- Tipografia dos títulos: Playfair Display.
+- Tipografia dos textos: Inter.
+
+O design deve transmitir sofisticação, gastronomia, Natal, celebração e exclusividade.
+
+Utilize fotografias gastronômicas de qualidade, cartões elegantes, menus intuitivos, animações suaves e uma experiência excelente em smartphones.
+
+Não utilize aparência de dashboard genérico.
+
+## 2. ESTRUTURA PRINCIPAL
+
+O aplicativo terá as seguintes áreas:
+
+1. Início.
+2. Coleções e receitas.
+3. Minha Ceia.
+4. Lista de compras.
+5. Chef IA.
+6. Desafios culinários.
+7. Temporizadores.
+8. Meu perfil.
+9. Painel administrativo.
+
+No celular, mantenha a navegação inferior com os principais módulos.
+
+No desktop, utilize navegação lateral elegante.
+
+## 3. NOVA ARQUITETURA DO CATÁLOGO
+
+Esta é uma das partes mais importantes do projeto.
+
+Não quero mais um catálogo com apenas sete receitas.
+
+Quero um verdadeiro catálogo gastronômico organizado em coleções, com diversas receitas individuais dentro de cada coleção.
+
+Crie as seguintes coleções:
+
+### Coleção 1 — Panetones & Chocotones
+
+Fonte: `receitas-criativas-de-panetones-e-chocotones-para-o-natal.pdf`
+
+O sumário do PDF identifica 25 preparações:
+
+- Panetone Tradicional.
+- Chocotone Tradicional.
+- Chocotone de Churros.
+- Chocotone de Ninho.
+- Chocotone Ferrero Rocher.
+- Chocotone de Brigadeiro.
+- Panetone de Morango.
+- Panetone Trufado de Maracujá.
+- Chocotone Trufado.
+- Chocotone Ovomaltine.
+- Chocotone de Brigadeiro Gourmet.
+- Chocotone de Nutella.
+- Chocotone de Coco.
+- Chocotone de Oreo.
+- Chocotone 2 Amores.
+- Panetone de Nozes.
+- Panetone de Doce de Leite com Ameixas.
+- Chocotone Laka.
+- Panetone com Cobertura Natalina.
+- Chocotone Dressed.
+- Chocotone Alpino.
+- Chocotone Kinder Bueno.
+- Panetone Red Velvet com Recheio de Limão.
+- Chocotone Infantil.
+- Panetone/Chocotone no Pote.
+
+Cadastre todas as 25 entradas no catálogo, respeitando os nomes e as referências de página do documento.
+
+O PDF possui também dicas, utensílios, massas, esponjas, recheios, coberturas e montagens.
+
+Não reduza as preparações a uma única receita básica. Cada preparação deve possuir sua própria ficha e relacionamentos com os componentes necessários.
+
+### Coleção 2 — Rabanadas Recheadas
+
+Fonte: `rabanadas-recheadas-d-amp-cc-2021.pdf`
+
+Este material possui uma estrutura diferente.
+
+Não trate simplesmente cada recheio como uma receita independente.
+
+Crie uma experiência interativa chamada:
+
+**MONTE SUA RABANADA**
+
+Organize o conteúdo em componentes:
+
+- Pão para rabanada doce.
+- Pão para rabanada salgada.
+- Preparação da calda.
+- Processo de fritura.
+- Recheios doces.
+- Recheios salgados.
+- Finalizações.
+
+Permita que o usuário selecione uma base e combine com um recheio e uma finalização, respeitando as combinações apresentadas no material original.
+
+Crie fichas para os componentes e receitas combinadas somente depois de analisar o documento completo.
+
+### Coleção 3 — Pavês
+
+Fontes:
+
+`11-receta-de-pave-completo-y-revisado.pdf`
+
+`receita-de-pave-floresta-negra-com-creme-danete-uma-sobremesa-natalina-leve-e-saborosa.pdf`
+
+Cadastre as onze variações identificadas no primeiro documento:
+
+- Pavê de Chocolate.
+- Pavê de Chocolate BIS.
+- Pavê de Limão.
+- Pavê de Pêssego.
+- Pavê de Abacaxi.
+- Pavê de Maracujá e Chocolate.
+- Pavê de Uva, Chocolate e Chantilly.
+- Pavê de Amendoim.
+- Pavê de Ameixa.
+- Pavê de Café.
+- Pavê de Chocolate Branco.
+
+Acrescente a preparação individual:
+
+- Pavê Floresta Negra com Creme Danete.
+
+Total identificado: 12 preparações.
+
+O primeiro documento possui partes em espanhol. Traduza cuidadosamente os títulos, ingredientes e instruções para português brasileiro, mantendo a referência ao texto original e encaminhando a tradução para revisão administrativa.
+
+Não faça conversões de medidas automaticamente sem validação.
+
+### Coleção 4 — Tortas Doces
+
+Fonte: `tortas-doces.pdf`
+
+Cadastre as 15 preparações identificadas no índice:
+
+- Torta de Chocolate.
+- Torta de Banana e Coco.
+- Torta de Chantilly com Maracujá.
+- Torta de Ameixa com Nozes.
+- Torta de Limão.
+- Torta Doce de Milho.
+- Torta Holandesa.
+- Torta Mousse de Mel.
+- Torta de Manga.
+- Torta Romeu e Julieta.
+- Torta de Nozes.
+- Torta Integral.
+- Torta de Pêra.
+- Torta Sorvete de Café.
+- Torta de Maçã.
+
+Preserve as medidas originais, inclusive xícaras de 240 ml.
+
+Quando uma receita possuir massa, recheio e cobertura, organize essas partes separadamente na ficha.
+
+### Coleção 5 — Manjar de Coco
+
+Crie a coleção e deixe preparada para receber o PDF.
+
+Não invente receitas nem quantidades.
+
+### Coleção 6 — Pudins
+
+Crie a coleção e deixe preparada para receber o PDF de Pudim de Leite Condensado.
+
+Não invente receitas nem quantidades.
+
+IMPORTANTE: os PDFs de Manjar e Pudim ainda não estão anexados. Deixe essas coleções como pendentes de conteúdo.
+
+**Não fixe números de receitas manualmente nos indicadores.** Calcule as quantidades com base nos registros reais e no status de publicação. Diferencie receitas completas, componentes e variações combináveis.
+
+---
+
+## 4. MODELO DE DADOS
+
+Utilize Supabase como backend principal, desde que esteja conectado ao projeto.
+
+Crie uma arquitetura relacional que permita adicionar novas coleções, receitas e temporadas futuramente.
+
+Tabelas:
+
+### Conteúdo
+
+- source_documents
+- collections
+- recipes
+- recipe_components
+- ingredients
+- recipe_ingredients
+- recipe_steps
+- recipe_step_timers
+- recipe_tags
+- recipe_favorites
+
+### Planejamento
+
+- meal_plans
+- plan_recipes
+- shopping_lists
+- shopping_items
+- cooking_sessions
+
+### Gamificação e IA
+
+- challenges
+- user_challenges
+- challenge_submissions
+- ai_conversations
+- ai_messages
+
+### Comercial e administração
+
+- profiles
+- seasons
+- orders
+- payment_transactions
+- memberships
+- admin_audit_logs
+
+Utilize UUIDs, relacionamentos, chaves estrangeiras, índices e timestamps.
+
+Cada receita deve estar relacionada com sua coleção e seu documento de origem.
+
+Armazene a referência das páginas de origem.
+
+Uma receita poderá possuir várias partes: massa, esponja, recheio, cobertura, calda, montagem e finalização.
+
+Uma mesma preparação poderá utilizar componentes compartilhados, evitando duplicação desnecessária.
+
+## 5. IMPORTAÇÃO E ORGANIZAÇÃO DOS PDFs
+
+Implemente um fluxo administrativo de importação de documentos.
+
+O sistema deverá:
+
+1. Receber os PDFs.
+2. Identificar o título e o sumário.
+3. Localizar as receitas.
+4. Extrair ingredientes.
+5. Extrair quantidades e unidades.
+6. Identificar rendimento.
+7. Separar as etapas do preparo.
+8. Identificar tempos e temperaturas.
+9. Identificar observações e dicas.
+10. Registrar a página de origem de cada informação.
+
+Cadastre o resultado inicialmente como rascunho.
+
+Crie os estados:
+
+- draft.
+- review.
+- approved.
+- published.
+- pending_permission.
+
+O administrador precisa revisar e aprovar antes da publicação.
+
+Não invente informações ausentes, não complete quantidades por suposição e não substitua ingredientes.
+
+Preserve as medidas originais.
+
+Quando houver dúvidas na extração, destaque o campo para revisão humana.
+
+Os PDFs originais devem ficar armazenados em bucket privado no Supabase Storage.
+
+Não disponibilize os PDFs completos publicamente como consequência da importação.
+
+Respeite as permissões comerciais dos materiais.
+
+## 6. FICHA INDIVIDUAL DE RECEITAS
+
+Crie uma página de detalhes premium para cada receita.
+
+Ela deverá conter:
+
+- Fotografia principal.
+- Nome.
+- Descrição.
+- Coleção.
+- Dificuldade.
+- Rendimento.
+- Tempo de preparo.
+- Tempo de forno.
+- Tempo de refrigeração ou descanso.
+- Ingredientes.
+- Modo de preparo.
+- Dicas.
+- Observações.
+- Equipamentos necessários.
+- Botão de favoritos.
+- Botão adicionar à ceia.
+- Botão adicionar ingredientes à lista.
+- Botão começar a cozinhar.
+
+Cada etapa deverá ser numerada e possuir seus próprios dados.
+
+Quando houver temporizador associado, apresentar um botão para iniciar.
+
+## 7. CALCULADORA DE PORÇÕES
+
+Permita que o usuário ajuste o número de convidados.
+
+Recalcule os ingredientes com base no rendimento original da receita.
+
+Não aplique proporção matemática automaticamente em medidas que necessitem de conversão culinária ou validação.
+
+Preserve unidades como gramas, mililitros, unidades, colheres e xícaras.
+
+Ingredientes indicados como quantidade necessária, a gosto ou QN devem permanecer como medidas textuais quando não houver quantidade numérica.
+
+Para receitas com componentes independentes, calcule cada componente de acordo com a estrutura original.
+
+## 8. PLANEJADOR DA CEIA
+
+Permita:
+
+- Escolher Natal ou Ano-Novo.
+- Definir data.
+- Definir número de convidados.
+- Dar nome ao evento.
+- Selecionar várias receitas.
+- Montar o cardápio.
+- Criar cronograma de preparação.
+- Criar checklist.
+- Marcar tarefas concluídas.
+
+O planejamento deve considerar tempo de preparo, forno, descanso e refrigeração quando esses dados estiverem cadastrados e aprovados.
+
+## 9. LISTA DE COMPRAS INTELIGENTE
+
+Gere listas a partir das receitas selecionadas.
+
+Agrupe ingredientes repetidos quando as unidades forem compatíveis.
+
+Não some quantidades de unidades incompatíveis.
+
+Permita:
+
+- Marcar produtos comprados.
+- Editar quantidades.
+- Adicionar itens manualmente.
+- Excluir itens.
+- Separar por categorias.
+- Compartilhar a lista.
+
+A lista precisa ficar salva no perfil do usuário.
+
+## 10. MODO COZINHEIRO E TEMPORIZADORES
+
+Implemente um modo especial para acompanhar o preparo:
+
+- Exibir uma etapa por vez.
+- Botões avançar e voltar.
+- Progresso da receita.
+- Ingredientes necessários para a etapa.
+- Temporizadores.
+- Botão pausar e continuar.
+- Marcação de etapa concluída.
+- Texto ampliado para facilitar a leitura na cozinha.
+
+Os cronômetros devem funcionar independentemente da navegação entre telas, dentro das limitações do navegador.
+
+## 11. CHEF IA
+
+Crie o assistente culinário utilizando a API da OpenAI em uma função segura de servidor.
+
+O Chef deverá consultar as fichas aprovadas do banco de dados.
+
+Funcionalidades:
+
+- Tirar dúvidas sobre receitas.
+- Explicar etapas.
+- Ajudar no planejamento.
+- Sugerir combinações de sobremesas.
+- Ajudar na substituição de ingredientes, deixando claro quando a substituição não está prevista na receita original.
+- Consultar quantidades cadastradas.
+- Ajudar na apresentação das sobremesas.
+- Orientar sobre a organização da cozinha.
+
+A IA não pode inventar quantidades, temperaturas, tempos ou instruções e afirmar que pertencem ao material original.
+
+Quando não encontrar uma resposta segura na base, deve informar que aquela informação não está disponível.
+
+Nunca exponha a chave da OpenAI no frontend.
+
+Implemente limites de utilização para controlar custos.
+
+## 12. DESAFIOS CULINÁRIOS
+
+Crie uma área de gamificação.
+
+Exemplos:
+
+- Prepare seu primeiro panetone.
+- Faça sua primeira rabanada.
+- Complete três receitas.
+- Organize sua ceia.
+- Prepare uma sobremesa especial.
+- Conclua seu planejamento.
+
+Implemente:
+
+- Pontuação.
+- Medalhas.
+- Progresso.
+- Registro de desafios concluídos.
+- Envio opcional de fotos.
+
+## 13. ACESSO COMERCIAL POR TEMPORADA
+
+O modelo comercial será:
+
+PAGAMENTO ÚNICO COM ACESSO POR TEMPORADA.
+
+O checkout será realizado pelo Mercado Pago, utilizando Checkout Pro.
+
+Implemente a estrutura para:
+
+- Criar pedido.
+- Criar preferência de pagamento.
+- Redirecionar ao Mercado Pago.
+- Receber Webhook.
+- Validar a assinatura.
+- Consultar o pagamento diretamente na API.
+- Confirmar valor, moeda e referência do pedido.
+- Liberar acesso somente depois de pagamento aprovado.
+- Registrar transações.
+- Bloquear pagamentos estornados ou contestados conforme a política definida.
+
+Crie a tabela seasons para administrar:
+
+- Nome da temporada.
+- Início das vendas.
+- Fim das vendas.
+- Início do acesso.
+- Encerramento do acesso.
+- Situação da temporada.
+
+As datas devem ser configuráveis pelo painel administrativo.
+
+A página de retorno do checkout não poderá liberar acesso diretamente.
+
+O processamento de Webhooks deverá ser idempotente.
+
+Não habilite pagamentos reais sem credenciais e testes completos.
+
+Nunca coloque tokens do Mercado Pago no navegador.
+
+## 14. PAINEL ADMINISTRATIVO
+
+Crie a rota /admin protegida.
+
+Inclua:
+
+- Dashboard.
+- Cadastro e edição de coleções.
+- Cadastro e edição de receitas.
+- Gestão de ingredientes.
+- Gestão das etapas.
+- Gestão de documentos.
+- Revisão de importações.
+- Controle de permissões comerciais.
+- Gestão de usuários.
+- Gestão de pedidos.
+- Gestão de memberships.
+- Gestão de temporadas.
+- Gestão de desafios.
+- Indicadores de utilização.
+
+O administrador pode cadastrar, editar, aprovar, publicar, arquivar ou excluir conteúdo de acordo com suas permissões.
+
+As ações importantes devem ser registradas em admin_audit_logs.
+
+A role administrativa deve ser protegida no servidor e não pode ser alterada pelo próprio usuário.
+
+## 15. SEGURANÇA
+
+Implemente Supabase Auth.
+
+Inclua:
+
+- Cadastro.
+- Login.
+- Logout.
+- Recuperação de senha.
+- Perfil de usuário.
+- Controle de acesso.
+
+Ative Row Level Security em todas as tabelas apropriadas.
+
+Cada usuário só poderá acessar seus próprios planejamentos, listas, favoritos, sessões e conversas.
+
+O conteúdo premium só poderá ser consultado por usuários com acesso válido à temporada.
+
+Crie funções seguras no backend para operações privilegiadas.
+
+Não exponha service_role, API keys ou credenciais privadas.
+
+## 16. PWA E RESPONSIVIDADE
+
+Quero que o aplicativo possa ser adicionado à tela inicial do celular.
+
+Implemente:
+
+- Manifest.
+- Ícones.
+- Tela inicial.
+- Layout responsivo.
+- Navegação mobile.
+- Estados de carregamento.
+- Feedback visual.
+- Tratamento de erros.
+
+O aplicativo deve funcionar bem em Android, iPhone, tablets e computadores.
+
+Não permita que o modo offline exiba conteúdo premium que não esteja autorizado.
+
+## 17. ORGANIZAÇÃO DA IMPLEMENTAÇÃO
+
+Não tente implementar tudo de uma vez em uma única alteração.
+
+Divida o desenvolvimento em fases:
+
+FASE 1: análise do MVP existente e evolução da interface com coleções e receitas.
+
+FASE 2: banco de dados, autenticação e permissões.
+
+FASE 3: importação dos PDFs, estruturação das receitas e revisão administrativa.
+
+FASE 4: catálogo completo e fichas individuais.
+
+FASE 5: planejador, calculadora, lista de compras e modo cozinheiro.
+
+FASE 6: Chef IA e desafios.
+
+FASE 7: Mercado Pago, temporadas e liberação automática de acesso.
+
+FASE 8: testes, segurança e publicação.
+
+Ao terminar cada fase, apresente:
+- O que foi implementado.
+- Quais arquivos foram modificados.
+- Quais tabelas foram criadas.
+- Quais integrações estão funcionando.
+- Quais pendências existem.
+- Quais testes foram executados.
+
+Não afirme que uma integração está funcionando sem testá-la.
+
+Não substitua os dados originais por conteúdo fictício.
+
+Se não conseguir acessar algum PDF, informe o nome do arquivo e solicite que ele seja anexado novamente ao projeto.
+
+## OBJETIVO FINAL
+
+Entregar um produto digital premium, com visual sofisticado, catálogo gastronômico de várias coleções, receitas interativas, planejamento inteligente, lista de compras, temporizadores, inteligência artificial e painel administrativo.
+
+O cliente não deve sentir que está comprando e-books.
+
+Ele deve sentir que está adquirindo uma experiência completa para organizar e preparar sua ceia de Natal e Ano-Novo.
+
+Comece analisando o projeto atual e execute a FASE 1 sem apagar funcionalidades existentes.

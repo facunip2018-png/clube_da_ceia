@@ -1,0 +1,24 @@
+{
+  "collection": "tortas-doces",
+  "document": "tortas-doces",
+  "kind": "recipe",
+  "status": "draft",
+  "page_ref_origin": "Índice informado no MVP — confirmar no PDF",
+  "entries": [
+    { "title": "Torta de Chocolate", "page": 2 },
+    { "title": "Torta de Banana e Coco", "page": 3 },
+    { "title": "Torta de Chantilly com Maracujá", "page": 4 },
+    { "title": "Torta de Ameixa com Nozes", "page": 5 },
+    { "title": "Torta de Limão", "page": 6 },
+    { "title": "Torta Doce de Milho", "page": 7 },
+    { "title": "Torta Holandesa", "page": 8 },
+    { "title": "Torta Mousse de Mel", "page": 9 },
+    { "title": "Torta de Manga", "page": 10 },
+    { "title": "Torta Romeu e Julieta", "page": 11 },
+    { "title": "Torta de Nozes", "page": 12 },
+    { "title": "Torta Integral", "page": 13 },
+    { "title": "Torta de Pêra", "page": 14 },
+    { "title": "Torta Sorvete de Café", "page": 15 },
+    { "title": "Torta de Maçã", "page": 16 }
+  ]
+}
