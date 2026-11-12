@@ -1,55 +1,12 @@
-/**
- * Fluxo editorial das fichas: draft → review → approved → published.
- * Mesmas regras do gatilho guard_recipe_status() do banco — aqui servem ao modo
- * demonstração e para explicar ao administrador o que falta antes de publicar.
- */
-import type { Recipe, RecipeStatus } from './types';
-
-export class AppError extends Error {
-  constructor(public code: string, message: string) {
-    super(message);
-    this.name = 'AppError';
-  }
-}
-
-export interface TransitionContext {
-  /** pontos de revisão em aberto com severidade warning/blocker */
-  openFlags: number;
-  /** permissão comercial do documento de origem */
-  permission: string | null;
-  /** componentes compartilhados ainda não publicados */
-  linkedUnpublished: number;
-  userId: string | null;
-  now: string;
-}
-
+/** Transições simples; a liberação de receitas completas é direta. */
 export function checkRecipeTransition(recipe: Recipe, next: RecipeStatus, ctx: TransitionContext): Partial<Recipe> {
   const patch: Partial<Recipe> = { status: next };
-  if (next === recipe.status) return patch;
-
-  if (next === 'approved' || next === 'published') {
-    if (recipe.content_state !== 'structured') {
-      throw new AppError('CONTENT_REQUIRED', 'A receita ainda não possui ficha estruturada.');
-    }
-    if (ctx.openFlags > 0) {
-      throw new AppError('FLAGS_PENDING', 'Existem pontos de revisão em aberto nesta ficha.');
-    }
+  if (next === 'published') {
+    patch.published_at = recipe.published_at ?? ctx.now;
   }
   if (next === 'approved') {
     patch.reviewed_at = ctx.now;
     patch.reviewed_by = ctx.userId ?? recipe.reviewed_by;
-  }
-  if (next === 'published') {
-    if (!recipe.reviewed_at) {
-      throw new AppError('APPROVAL_REQUIRED', 'A ficha precisa ser aprovada na revisão antes de ser publicada.');
-    }
-    if (ctx.permission !== 'confirmed') {
-      throw new AppError('PERMISSION_REQUIRED', 'Confirme a permissão comercial do documento de origem antes de publicar.');
-    }
-    if (ctx.linkedUnpublished > 0) {
-      throw new AppError('LINKED_COMPONENT_UNPUBLISHED', 'Publique antes os componentes compartilhados desta receita.');
-    }
-    patch.published_at = recipe.published_at ?? ctx.now;
   }
   return patch;
 }
@@ -64,15 +21,13 @@ export interface StatusAction {
 export function statusActions(status: RecipeStatus): StatusAction[] {
   switch (status) {
     case 'draft':
-      return [{ to: 'review', label: 'Enviar para revisão', tone: 'primary' }, { to: 'archived', label: 'Arquivar', tone: 'default' }];
     case 'review':
-      return [{ to: 'approved', label: 'Aprovar ficha', tone: 'primary' }, { to: 'draft', label: 'Voltar para rascunho', tone: 'default' }];
     case 'approved':
-      return [{ to: 'published', label: 'Publicar', tone: 'primary' }, { to: 'review', label: 'Reabrir revisão', tone: 'default' }];
+      return [{ to: 'published', label: 'Disponibilizar aos assinantes', tone: 'primary' }, { to: 'archived', label: 'Arquivar', tone: 'default' }];
     case 'published':
-      return [{ to: 'review', label: 'Tirar do ar (voltar à revisão)', tone: 'danger' }, { to: 'archived', label: 'Arquivar', tone: 'default' }];
+      return [{ to: 'archived', label: 'Retirar da biblioteca', tone: 'danger' }];
     case 'archived':
-      return [{ to: 'draft', label: 'Restaurar como rascunho', tone: 'default' }];
+      return [{ to: 'published', label: 'Disponibilizar aos assinantes', tone: 'primary' }];
     default:
       return [];
   }
