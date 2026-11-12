@@ -38,7 +38,7 @@ function parseModelJson(value: string): JsonRecord {
   // Alguns modelos gratuitos acrescentam uma frase antes/depois do JSON.
   // Localiza o primeiro objeto completo sem confundir chaves dentro de strings.
   const start = cleaned.indexOf('{');
-  if (start >= 0 && start > 0) {
+  if (start >= 0) {
     let depth = 0;
     let inString = false;
     let escaped = false;
@@ -351,7 +351,18 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       if (!outputText) {
         return NextResponse.json({ error: `A IA não retornou conteúdo legível na parte ${partIndex + 1} de ${pdfParts.length}. Nenhuma receita foi cadastrada.`, code: 'PDF_PART_EMPTY' }, { status: 502 });
       }
-      const parsed = parseModelJson(outputText);
+      let parsed: JsonRecord;
+      try {
+        parsed = parseModelJson(outputText);
+      } catch {
+        console.error('OpenRouter retornou conteúdo fora do JSON esperado:', { part: partIndex + 1, totalParts: pdfParts.length });
+        return NextResponse.json({
+          error: `O leitor respondeu em formato inesperado na parte ${partIndex + 1} de ${pdfParts.length}. Nenhuma receita foi cadastrada; tente novamente.`,
+          code: 'PDF_MODEL_INVALID_JSON',
+          part: partIndex + 1,
+          total_parts: pdfParts.length,
+        }, { status: 502 });
+      }
       const normalized = shiftSourcePages(normalizePayload(parsed), part.firstPage);
       if (normalized.collection && typeof normalized.collection === 'object') {
         const candidate = normalized.collection as JsonRecord;
