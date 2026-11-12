@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Check, CircleAlert, Eye, Info, RotateCcw, Save, TriangleAlert, X } from 'lucide-react';
+import { Check, CircleAlert, Eye, Info, Plus, RotateCcw, Save, TriangleAlert, X } from 'lucide-react';
 import { useTable } from '@/data/hooks';
 import { useSession } from '@/data/session';
 import { StatusPill } from '@/components/cards';
