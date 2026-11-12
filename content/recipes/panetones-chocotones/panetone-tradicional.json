@@ -11,14 +11,13 @@
   "description": "Panetone tradicional com uvas-passas e frutas cristalizadas.",
   "yield": {
     "quantity": 5,
-    "unit": "Panetones",
+    "unit": "Panetone",
     "unit_plural": "Panetones",
     "detail": "500g cada",
     "text": "5 Panetones de 500g",
     "page": 20
   },
   "times": {
-    "rest_minutes": 120,
     "bake_minutes": 30
   },
   "source_pages": {
