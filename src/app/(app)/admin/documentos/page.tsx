@@ -67,20 +67,21 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
     }
   }
 
-  async function extractText(): Promise<boolean> {
+  async function extractText(storagePath?: string): Promise<boolean> {
     if (extracting || importing || !supabase) return false;
     setExtracting(true);
     try {
       const { data: access, error: accessError } = await supabase.rpc('my_access');
       if (accessError || !access?.is_admin) throw new Error('Apenas administradores podem extrair PDFs.');
 
-      if (document.file_status !== 'stored' || !document.storage_path) {
+      const pdfPath = storagePath ?? document.storage_path;
+      if ((!storagePath && document.file_status !== 'stored') || !pdfPath) {
         throw new Error('Este documento ainda não possui um PDF armazenado.');
       }
 
       const { data: file, error: fileError } = await supabase.storage
         .from('source-documents')
-        .download(document.storage_path);
+        .download(pdfPath);
       if (fileError || !file) throw new Error('Não foi possível abrir o PDF privado no Supabase.');
       if (file.size > MAX_PDF_BYTES) throw new Error('O PDF ultrapassa o limite de 35 MB para extração.');
 
@@ -142,9 +143,9 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
     }
   }
 
-  async function readAndImportPdf() {
+  async function readAndImportPdf(storagePath?: string) {
     if (extracting || importing) return;
-    const extracted = await extractText();
+    const extracted = await extractText(storagePath);
     if (!extracted) return;
     await importPdf();
   }
@@ -163,7 +164,7 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
         tables: [...TABLES],
         success: 'PDF enviado. Iniciando leitura automática…',
       });
-      if (saved) await readAndImportPdf();
+      if (saved) await readAndImportPdf(path);
     } catch (error) {
       fail(error);
     } finally {
