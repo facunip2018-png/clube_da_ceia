@@ -98,13 +98,9 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
           const page = await pdf.getPage(pageNumber);
           const content = await page.getTextContent();
           const text = content.items
-            .map((item) => {
-              if (!('str' in item) || typeof item.str !== 'string') return '';
-              return item.str + ('hasEOL' in item && item.hasEOL ? '\\n' : ' ');
-            })
-            .join('')
-            .replace(/[ \\t]+/g, ' ')
-            .replace(/ *\\n */g, '\\n')
+            .map((item) => ('str' in item && typeof item.str === 'string' ? item.str : ''))
+            .join(' ')
+            .replace(/\s+/g, ' ')
             .trim();
           characters += text.length;
           if (characters > MAX_EXTRACTED_CHARACTERS) {
