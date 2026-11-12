@@ -1,14 +1,143 @@
 [
-  { "slug": "leite-condensado", "name": "Leite condensado", "category": "laticinios" },
-  { "slug": "creme-de-leite-uht", "name": "Creme de leite (caixinha)", "category": "laticinios" },
-  { "slug": "creme-de-leite-fresco", "name": "Creme de leite fresco", "category": "laticinios" },
-  { "slug": "leite", "name": "Leite", "category": "laticinios" },
-  { "slug": "chocolate-em-po", "name": "Chocolate em pó", "category": "mercearia" },
-  { "slug": "acucar-refinado", "name": "Açúcar refinado", "category": "mercearia" },
-  { "slug": "bolacha-champanhe", "name": "Bolacha champanhe", "category": "mercearia" },
-  { "slug": "cerejas-em-calda", "name": "Cerejas em calda", "category": "mercearia" },
-  { "slug": "cerejas-frescas", "name": "Cerejas frescas", "category": "hortifruti" },
-  { "slug": "granule", "name": "Granulé", "category": "confeitaria" },
-  { "slug": "brigadeiros", "name": "Brigadeiros", "category": "confeitaria" },
-  { "slug": "agua", "name": "Água", "category": "despensa", "is_shoppable": false }
+  {
+    "slug": "leite-condensado",
+    "name": "Leite condensado",
+    "category": "laticinios"
+  },
+  {
+    "slug": "creme-de-leite-uht",
+    "name": "Creme de leite (caixinha)",
+    "category": "laticinios"
+  },
+  {
+    "slug": "creme-de-leite-fresco",
+    "name": "Creme de leite fresco",
+    "category": "laticinios"
+  },
+  {
+    "slug": "leite",
+    "name": "Leite",
+    "category": "laticinios"
+  },
+  {
+    "slug": "chocolate-em-po",
+    "name": "Chocolate em pó",
+    "category": "mercearia"
+  },
+  {
+    "slug": "acucar-refinado",
+    "name": "Açúcar refinado",
+    "category": "mercearia"
+  },
+  {
+    "slug": "bolacha-champanhe",
+    "name": "Bolacha champanhe",
+    "category": "mercearia"
+  },
+  {
+    "slug": "cerejas-em-calda",
+    "name": "Cerejas em calda",
+    "category": "mercearia"
+  },
+  {
+    "slug": "cerejas-frescas",
+    "name": "Cerejas frescas",
+    "category": "hortifruti"
+  },
+  {
+    "slug": "granule",
+    "name": "Granulé",
+    "category": "confeitaria"
+  },
+  {
+    "slug": "brigadeiros",
+    "name": "Brigadeiros",
+    "category": "confeitaria"
+  },
+  {
+    "slug": "agua",
+    "name": "Água",
+    "category": "despensa",
+    "is_shoppable": false
+  },
+  {
+    "slug": "farinha-de-trigo",
+    "name": "Farinha de trigo",
+    "category": "mercearia"
+  },
+  {
+    "slug": "fermento-biologico-seco",
+    "name": "Fermento biológico seco",
+    "category": "padaria"
+  },
+  {
+    "slug": "agua-morna",
+    "name": "Água morna",
+    "category": "despensa"
+  },
+  {
+    "slug": "essencia-de-baunilha",
+    "name": "Essência de baunilha",
+    "category": "confeitaria"
+  },
+  {
+    "slug": "essencia-de-panetone",
+    "name": "Essência de Panetone",
+    "category": "confeitaria"
+  },
+  {
+    "slug": "limao",
+    "name": "Limão",
+    "category": "hortifruti"
+  },
+  {
+    "slug": "laranja",
+    "name": "Laranja",
+    "category": "hortifruti"
+  },
+  {
+    "slug": "margarina-sem-sal",
+    "name": "Margarina sem sal",
+    "category": "laticinios"
+  },
+  {
+    "slug": "manteiga-sem-sal",
+    "name": "Manteiga sem sal",
+    "category": "laticinios"
+  },
+  {
+    "slug": "uva-passa",
+    "name": "Uvas-passas",
+    "category": "mercearia"
+  },
+  {
+    "slug": "frutas-cristalizadas",
+    "name": "Frutas cristalizadas",
+    "category": "mercearia"
+  },
+  {
+    "slug": "leite-em-po",
+    "name": "Leite em pó",
+    "category": "laticinios"
+  },
+  {
+    "slug": "sal",
+    "name": "Sal",
+    "category": "despensa"
+  },
+  {
+    "slug": "gema-de-ovo",
+    "name": "Gema de ovo",
+    "category": "laticinios"
+  },
+  {
+    "slug": "chocolate-em-gotas",
+    "name": "Chocolate em gotas",
+    "category": "confeitaria"
+  },
+  {
+    "slug": "chocolate-em-barra",
+    "name": "Chocolate em barra",
+    "category": "confeitaria"
+  }
 ]
