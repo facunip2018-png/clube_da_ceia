@@ -34,9 +34,42 @@ function cleanText(value: unknown): string | null {
 
 function parseModelJson(value: string): JsonRecord {
   const cleaned = value.trim().replace(/^\u0060\u0060\u0060(?:json)?\s*/i, '').replace(/\s*\u0060\u0060\u0060$/, '');
-  const parsed: unknown = JSON.parse(cleaned);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('O modelo não retornou um objeto JSON.');
-  return parsed as JsonRecord;
+  const candidates = [cleaned];
+  // Alguns modelos gratuitos acrescentam uma frase antes/depois do JSON.
+  // Localiza o primeiro objeto completo sem confundir chaves dentro de strings.
+  const start = cleaned.indexOf('{');
+  if (start >= 0 && start > 0) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < cleaned.length; i += 1) {
+      const char = cleaned[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === '{') depth += 1;
+      else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          candidates.push(cleaned.slice(start, i + 1));
+          break;
+        }
+      }
+    }
+  }
+  for (const candidate of candidates) {
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as JsonRecord;
+    } catch {
+      // Tenta o próximo trecho candidato.
+    }
+  }
+  throw new Error('O leitor de IA respondeu fora do formato JSON esperado.');
 }
 
 function getOutputText(payload: JsonRecord): string {
