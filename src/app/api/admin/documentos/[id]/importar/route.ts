@@ -204,15 +204,33 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       signal: AbortSignal.timeout(240_000),
     });
 
-    const aiPayload = await aiResponse.json() as JsonRecord;
+    const aiResponseText = await aiResponse.text();
+    let aiPayload: JsonRecord = {};
+    try {
+      const decoded: unknown = JSON.parse(aiResponseText);
+      if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)) aiPayload = decoded as JsonRecord;
+    } catch {
+      // Keep an empty payload; the status and a bounded response excerpt are logged below.
+    }
+
     if (!aiResponse.ok) {
       const status = aiResponse.status;
-      const message = status === 401 ? 'A chave do OpenRouter não foi aceita. Confira OPENROUTER_API_KEY na Vercel.'
-        : status === 402 ? 'O OpenRouter recusou a solicitação por limite ou saldo. Confirme se o modelo selecionado é gratuito e se sua conta não está com saldo negativo.'
-        : status === 403 ? 'O OpenRouter não autorizou esta solicitação.'
+      const providerError = aiPayload.error && typeof aiPayload.error === 'object'
+        ? aiPayload.error as JsonRecord
+        : {};
+      const providerMessage = cleanText(providerError.message) ?? cleanText(aiPayload.message);
+      console.error('OpenRouter PDF request failed:', {
+        status,
+        message: providerMessage ?? 'Resposta sem mensagem de erro',
+        responseExcerpt: providerMessage ? undefined : aiResponseText.slice(0, 1200),
+      });
+      const message = status === 401 ? 'A chave do OpenRouter não foi aceita. Confira o segredo cadastrado no cofre do Supabase.'
+        : status === 402 ? 'O OpenRouter recusou a solicitação por limite ou saldo. Nenhuma receita foi cadastrada.'
+        : status === 403 ? 'O OpenRouter não autorizou esta solicitação. Verifique as permissões da chave.'
         : status === 429 ? 'O limite gratuito do OpenRouter foi atingido. Aguarde a renovação da cota e tente novamente.'
-        : 'O serviço de leitura do PDF não respondeu corretamente.';
-      return NextResponse.json({ error: message, code: 'OPENROUTER_ERROR' }, { status: 502 });
+        : status === 400 ? 'O OpenRouter rejeitou o formato da solicitação. O motivo técnico foi registrado para correção.'
+        : 'O serviço de leitura do PDF não respondeu corretamente. O motivo técnico foi registrado para correção.';
+      return NextResponse.json({ error: message, code: 'OPENROUTER_ERROR', provider_status: status }, { status: 502 });
     }
 
     const outputText = getOutputText(aiPayload);
