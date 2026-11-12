@@ -26,7 +26,8 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
   const input = useRef<HTMLInputElement>(null);
   const [permission, setPermission] = useState(document.commercial_permission);
   const [notes, setNotes] = useState(document.permission_notes ?? '');
-  const [uploading, setUploading] = useState(false);\n  const [importing, setImporting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [importing, setImporting] = useState(false);
   const published = recipes.filter((r) => r.status === 'published').length;
   const dirty = permission !== document.commercial_permission || notes !== (document.permission_notes ?? '');
 
