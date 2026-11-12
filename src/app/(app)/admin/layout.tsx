@@ -11,6 +11,7 @@ const TABS = [
   { href: '/admin/receitas', label: 'Receitas' },
   { href: '/admin/catalogo', label: 'Categorias' },
   { href: '/admin/documentos', label: 'Materiais e direitos' },
+  { href: '/admin/apoio', label: 'Materiais de apoio' },
   { href: '/admin/temporadas', label: 'Temporada' },
   { href: '/admin/acessos', label: 'Pessoas e pagamentos' },
   { href: '/admin/auditoria', label: 'Auditoria' },
