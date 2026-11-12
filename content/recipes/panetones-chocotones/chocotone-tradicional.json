@@ -11,14 +11,13 @@
   "description": "Chocotone tradicional com gotas de chocolate ou chocolate em barra picado.",
   "yield": {
     "quantity": 5,
-    "unit": "Chocotones",
+    "unit": "Chocotone",
     "unit_plural": "Chocotones",
     "detail": "500g cada",
     "text": "5 Chocotones de 500g",
     "page": 24
   },
   "times": {
-    "rest_minutes": 120,
     "bake_minutes": 30
   },
   "source_pages": {
