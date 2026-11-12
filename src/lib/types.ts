@@ -78,6 +78,8 @@ export interface SourceDocumentRef {
   author: string | null;
   publisher: string | null;
   language: string;
+  file_name: string | null;
+  storage_path: string | null;
 }
 
 export interface SupportMaterial extends Timestamps {
