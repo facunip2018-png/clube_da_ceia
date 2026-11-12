@@ -2,12 +2,15 @@
   {
     "slug": "panetones-chocotones-natal",
     "collection": "panetones-chocotones",
-    "title": "Receitas criativas de panetones e chocotones para o Natal",
-    "file_name": "receitas-criativas-de-panetones-e-chocotones-para-o-natal.pdf",
+    "title": "Receitas 02 de Panetones",
+    "file_name": "Receitas 02 de panetones.pdf",
     "language": "pt-BR",
-    "file_status": "awaiting_upload",
+    "file_status": "received",
     "commercial_permission": "unknown",
-    "import_notes": "PDF ainda não anexado a esta base. O sumário identifica 25 preparações (lista e páginas vindas do MVP, a confirmar no PDF). O material traz também dicas, utensílios, massas, esponjas, recheios, coberturas e montagens: cada preparação deve ter ficha própria ligada aos componentes compartilhados."
+    "import_notes": "Conteúdo transcrito pelo administrador nesta conversa, páginas 8 a 115. A transcrição inclui utensílios, dicas, 25 preparações, massas, recheios, coberturas e montagens. Não foi anexado o PDF binário; referências de página usam a numeração apresentada na transcrição e devem ser conferidas no arquivo original quando disponível.",
+    "author": "Autoria própria (informada pelo administrador)",
+    "page_count": 115,
+    "permission_notes": "O administrador informou que o material é de sua própria autoria. A confirmação formal de permissão comercial permanece sujeita à validação no painel administrativo; não marcar como confirmada neste arquivo."
   },
   {
     "slug": "rabanadas-recheadas-dcc-2021",
@@ -45,11 +48,31 @@
     "permission_notes": "O PDF identifica a autora (Valéria Ribeiro) e a marca (Dona Lú Doces) e não traz termo de licença de uso. Confirme a permissão comercial antes de publicar a ficha.",
     "import_notes": "Importado em 10/11/2026 a partir do PDF anexado (11 páginas, texto extraído e conferido visualmente página a página; a página 7 contém apenas fotografia). As referências usam a página física do arquivo.",
     "toc": [
-      { "title": "Creme Danete", "printed_page": 4, "pdf_page": 4 },
-      { "title": "Ingredientes Montagem", "printed_page": 5, "pdf_page": 6 },
-      { "title": "Montagem", "printed_page": 7, "pdf_page": 8 },
-      { "title": "Marcas que usamos", "printed_page": 8, "pdf_page": 9 },
-      { "title": "Embalagem", "printed_page": 9, "pdf_page": 10 }
+      {
+        "title": "Creme Danete",
+        "printed_page": 4,
+        "pdf_page": 4
+      },
+      {
+        "title": "Ingredientes Montagem",
+        "printed_page": 5,
+        "pdf_page": 6
+      },
+      {
+        "title": "Montagem",
+        "printed_page": 7,
+        "pdf_page": 8
+      },
+      {
+        "title": "Marcas que usamos",
+        "printed_page": 8,
+        "pdf_page": 9
+      },
+      {
+        "title": "Embalagem",
+        "printed_page": 9,
+        "pdf_page": 10
+      }
     ]
   },
   {
