@@ -34,16 +34,14 @@ export function countLabel(recipes: Pick<Recipe, 'kind'>[]): string {
 
 export function CollectionCard({ summary, priority }: { summary: CollectionSummary; priority?: boolean }) {
   const { access } = useSession();
-  const { collection, recipes, stat } = summary;
+  const { collection, recipes } = summary;
   const published = recipes.filter((r) => r.status === 'published');
   const state = published.length ? 'open' : 'waiting';
   const meta = access.is_admin
     ? `${plural(recipes.length, 'item', 'itens')} · ${published.length} no ar`
     : state === 'open'
       ? countLabel(published)
-      : state === 'curation'
-        ? 'Em preparação'
-        : 'Em breve';
+      : 'Em breve';
   return (
     <article className="collection">
       <Photo src={collection.cover_image} alt="" sizes="(max-width: 600px) 50vw, (max-width: 1100px) 50vw, 33vw" priority={priority}>
