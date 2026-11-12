@@ -9,8 +9,8 @@ import { usePageTitle } from '@/components/ui';
 const TABS = [
   { href: '/admin', label: 'Visão geral' },
   { href: '/admin/receitas', label: 'Receitas' },
-  { href: '/admin/documentos', label: 'Documentos' },
-  { href: '/admin/catalogo', label: 'Coleções e desafios' },
+  { href: '/admin/catalogo', label: 'Categorias' },
+  { href: '/admin/documentos', label: 'Materiais e direitos' },
   { href: '/admin/temporadas', label: 'Temporada' },
   { href: '/admin/acessos', label: 'Pessoas e pagamentos' },
   { href: '/admin/auditoria', label: 'Auditoria' },
