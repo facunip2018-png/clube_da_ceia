@@ -270,7 +270,7 @@
       ],
       "ingredients": [
         {
-          "key": "leite-condensado",
+          "key": "leite-condensado-chocolate",
           "ingredient": "leite-condensado",
           "name": "leite condensado",
           "quantity": 1,
@@ -280,7 +280,7 @@
           "page": 75
         },
         {
-          "key": "creme-de-leite-uht",
+          "key": "creme-de-leite-uht-chocolate",
           "ingredient": "creme-de-leite-uht",
           "name": "creme de leite",
           "quantity": 1,
@@ -290,7 +290,7 @@
           "page": 75
         },
         {
-          "key": "ingrediente-fwvvyd",
+          "key": "cacau-50",
           "name": "cacau 50%",
           "quantity": 50,
           "unit": "g",
@@ -299,7 +299,7 @@
           "page": 75
         },
         {
-          "key": "leite-condensado",
+          "key": "leite-condensado-branco",
           "ingredient": "leite-condensado",
           "name": "leite condensado",
           "quantity": 1,
@@ -309,7 +309,7 @@
           "page": 75
         },
         {
-          "key": "creme-de-leite-uht",
+          "key": "creme-de-leite-uht-branco",
           "ingredient": "creme-de-leite-uht",
           "name": "creme de leite",
           "quantity": 1,
