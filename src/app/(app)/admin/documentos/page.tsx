@@ -67,8 +67,8 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
     }
   }
 
-  async function extractText() {
-    if (extracting || importing || !supabase) return;
+  async function extractText(): Promise<boolean> {
+    if (extracting || importing || !supabase) return false;
     setExtracting(true);
     try {
       const { data: access, error: accessError } = await supabase.rpc('my_access');
@@ -133,11 +133,20 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
       if (cleanupError) throw cleanupError;
 
       toast(`Texto extraído: ${pages.length} páginas, ${pagesWithText} com texto e ${characters.toLocaleString('pt-BR')} caracteres. O conteúdo foi gravado no Supabase.`);
+      return true;
     } catch (error) {
       fail(error);
+      return false;
     } finally {
       setExtracting(false);
     }
+  }
+
+  async function readAndImportPdf() {
+    if (extracting || importing) return;
+    const extracted = await extractText();
+    if (!extracted) return;
+    await importPdf();
   }
 
   async function upload(file: File | undefined) {
@@ -154,7 +163,7 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
         tables: [...TABLES],
         success: 'PDF enviado. Iniciando leitura automática…',
       });
-      if (saved) await importPdf();
+      if (saved) await readAndImportPdf();
     } catch (error) {
       fail(error);
     } finally {
@@ -211,14 +220,9 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
               <FileUp /> {uploading ? 'Enviando…' : document.file_status === 'stored' ? 'Substituir PDF' : 'Enviar PDF'}
             </button>
             {document.file_status === 'stored' && (
-              <>
-                <button type="button" className="btn outline sm" disabled={uploading || importing || extracting} onClick={extractText}>
-                  {extracting ? 'Extraindo texto…' : 'Extrair texto sem IA'}
-                </button>
-                <button type="button" className="btn dark sm" disabled={uploading || importing || extracting} onClick={importPdf}>
-                  {importing ? 'Lendo e cadastrando…' : 'Ler PDF e cadastrar receitas'}
-                </button>
-              </>
+              <button type="button" className="btn dark sm" disabled={uploading || importing || extracting} onClick={readAndImportPdf}>
+                {extracting ? 'Extraindo texto…' : importing ? 'Organizando e cadastrando…' : 'Ler PDF e cadastrar receitas'}
+              </button>
             )}
             <input ref={input} type="file" accept="application/pdf" hidden onChange={(e) => upload(e.target.files?.[0])} />
           </>
