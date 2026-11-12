@@ -52,7 +52,7 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
       if (error) throw error;
       await act(() => store.update('source_documents', { id: document.id }, { file_status: 'stored', storage_path: path, sha256: hash, file_name: document.file_name ?? file.name }), {
         tables: [...TABLES],
-        success: 'PDF guardado no cofre privado',
+        success: 'PDF disponível para os assinantes',
       });
     } catch (error) {
       fail(error);
@@ -107,12 +107,12 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
         {supabase ? (
           <>
             <button type="button" className="btn outline sm" disabled={uploading} onClick={() => input.current?.click()}>
-              <FileUp /> {uploading ? 'Enviando…' : document.file_status === 'stored' ? 'Substituir PDF no cofre' : 'Enviar PDF ao cofre privado'}
+              <FileUp /> {uploading ? 'Enviando…' : document.file_status === 'stored' ? 'Substituir PDF' : 'Enviar PDF'}
             </button>
             <input ref={input} type="file" accept="application/pdf" hidden onChange={(e) => upload(e.target.files?.[0])} />
           </>
         ) : (
-          <span className="muted small">O envio do PDF ao cofre privado fica disponível com o Supabase conectado.</span>
+          <span className="muted small">O envio do PDF fica disponível com o Supabase conectado.</span>
         )}
         <span className="muted small">{recipes.length} item(ns) do catálogo · {published} no ar</span>
       </div>
@@ -130,7 +130,7 @@ export default function AdminDocuments() {
 
   return (
     <>
-      <PageHead eyebrow="Materiais de origem" title="Documentos." sub="Os PDFs originais ficam em um cofre privado, acessível só a administradores. Confirme a autorização uma vez por material. O sistema registra automaticamente quem confirmou e quando." />
+      <PageHead eyebrow="Materiais de origem" title="Documentos." sub="Envie os PDFs originais aqui. Depois, os assinantes com acesso ativo poderão baixar o material diretamente na página de cada receita." />
       <div style={{ marginBottom: 16 }}>
         <Notice>
           <b>Autorização:</b> confirme uma única vez por material quando ele for de sua autoria ou houver licença/autorização para uso no Clube. O sistema registra quem confirmou e a data. Se a autorização for retirada, as receitas publicadas daquele material saem do ar automaticamente.
