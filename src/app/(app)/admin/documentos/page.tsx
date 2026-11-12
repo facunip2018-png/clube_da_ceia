@@ -21,12 +21,12 @@ async function sha256Hex(file: File): Promise<string> {
 function DocumentCard({ document, recipes, collection }: { document: SourceDocument; recipes: Recipe[]; collection: string }) {
   const { store, supabase } = useSession();
   const act = useAdminAction();
-  const { fail } = useToast();
+  const { fail, toast } = useToast();
   const { confirm } = useDialog();
   const input = useRef<HTMLInputElement>(null);
   const [permission, setPermission] = useState(document.commercial_permission);
   const [notes, setNotes] = useState(document.permission_notes ?? '');
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploading] = useState(false);\n  const [importing, setImporting] = useState(false);
   const published = recipes.filter((r) => r.status === 'published').length;
   const dirty = permission !== document.commercial_permission || notes !== (document.permission_notes ?? '');
 
@@ -38,6 +38,25 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
       tables: [...TABLES],
       success: permission === 'confirmed' ? 'Permissão confirmada' : 'Permissão atualizada',
     });
+  }
+
+  async function importPdf() {
+    if (importing || uploading) return;
+    setImporting(true);
+    try {
+      const response = await fetch(`/api/admin/documentos/${document.id}/importar`, { method: 'POST' });
+      const result = await response.json() as { error?: string; result?: { created?: number; skipped?: number; support_materials?: number; published?: boolean } };
+      if (!response.ok) throw new Error(result.error || 'Não foi possível ler o PDF.');
+      const created = result.result?.created ?? 0;
+      const skipped = result.result?.skipped ?? 0;
+      const materials = result.result?.support_materials ?? 0;
+      toast(`${created} receita(s) criada(s), ${materials} material(is) de apoio importado(s)${skipped ? `, ${skipped} ignorada(s) por falta de conteúdo ou duplicidade` : ''}.`);
+      window.location.reload();
+    } catch (error) {
+      fail(error);
+    } finally {
+      setImporting(false);
+    }
   }
 
   async function upload(file: File | undefined) {
@@ -106,9 +125,14 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
         <button type="button" className="btn dark sm" disabled={!dirty} onClick={save}><Save /> Salvar permissão</button>
         {supabase ? (
           <>
-            <button type="button" className="btn outline sm" disabled={uploading} onClick={() => input.current?.click()}>
+            <button type="button" className="btn outline sm" disabled={uploading || importing} onClick={() => input.current?.click()}>
               <FileUp /> {uploading ? 'Enviando…' : document.file_status === 'stored' ? 'Substituir PDF' : 'Enviar PDF'}
             </button>
+            {document.file_status === 'stored' && (
+              <button type="button" className="btn dark sm" disabled={uploading || importing} onClick={importPdf}>
+                {importing ? 'Lendo e cadastrando…' : 'Ler PDF e cadastrar receitas'}
+              </button>
+            )}
             <input ref={input} type="file" accept="application/pdf" hidden onChange={(e) => upload(e.target.files?.[0])} />
           </>
         ) : (
@@ -130,7 +154,7 @@ export default function AdminDocuments() {
 
   return (
     <>
-      <PageHead eyebrow="Materiais de origem" title="Documentos." sub="Envie os PDFs originais aqui. Depois, os assinantes com acesso ativo poderão baixar o material diretamente na página de cada receita." />
+      <PageHead eyebrow="Materiais de origem" title="Documentos." sub="Envie um PDF: o sistema lê as páginas, separa receitas, ingredientes, preparo e materiais de apoio e cadastra o conteúdo no catálogo." />
       <div style={{ marginBottom: 16 }}>
         <Notice>
           <b>Autorização:</b> confirme uma única vez por material quando ele for de sua autoria ou houver licença/autorização para uso no Clube. O sistema registra quem confirmou e a data. Se a autorização for retirada, as receitas publicadas daquele material saem do ar automaticamente.
