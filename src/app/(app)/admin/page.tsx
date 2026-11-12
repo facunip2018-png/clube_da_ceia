@@ -23,8 +23,8 @@ export default function AdminHome() {
         <div className="adminstat"><span className="eyebrow">Receitas cadastradas</span><strong>{recipes.length}</strong></div>
         <div className="adminstat"><span className="eyebrow">Receitas no ar</span><strong>{published}</strong><span className="sub small">{structured} com ficha estruturada</span></div>
       </div>
-      <div className="gridcards" style={{ marginTop: 18 }}>
-        <Link href="/admin/catalogo" className="panel cardlink">
+      <div className="twocol" style={{ marginTop: 18 }}>
+        <Link href="/admin/catalogo" className="panel">
           <div className="eyebrow">Organização</div>
           <h2 style={{ margin: '6px 0' }}>Categorias</h2>
           <p className="sub">Crie e organize Panetones, Manjares, Tortas, Rabanadas e outras categorias.</p>
