@@ -1,0 +1,367 @@
+{
+  "slug": "chocotone-laka",
+  "title": "Chocotone Laka",
+  "original_title": "CHOCOTONE LAKA",
+  "collection": "panetones-chocotones",
+  "document": "panetones-chocotones-natal",
+  "kind": "recipe",
+  "status": "review",
+  "language": "pt-BR",
+  "position": 38,
+  "description": "Chocotone Laka com massa de chocotone e recheio de laka.",
+  "yield": {
+    "quantity": 5,
+    "unit": "Chocotone",
+    "unit_plural": "Chocotones",
+    "detail": "500g cada; receita do recheio para 1 unidade de 500g",
+    "text": "5 Chocotones de 500g; recheio para 1 unidade de 500g",
+    "page": 86
+  },
+  "times": {
+    "bake_minutes": 30
+  },
+  "source_pages": {
+    "start": 85,
+    "end": 88
+  },
+  "page_ref_verified": false,
+  "tags": [
+    "natal",
+    "chocotone"
+  ],
+  "components": [
+    {
+      "key": "esponja",
+      "role": "esponja",
+      "title": "Esponja",
+      "pages": [
+        85,
+        86
+      ],
+      "ingredients": [
+        {
+          "key": "farinha-de-trigo",
+          "ingredient": "farinha-de-trigo",
+          "name": "farinha de trigo",
+          "quantity": 200,
+          "unit": "g",
+          "scaling": "linear",
+          "original": "200g de farinha de trigo",
+          "page": 85
+        },
+        {
+          "key": "fermento-biologico-seco",
+          "ingredient": "fermento-biologico-seco",
+          "name": "fermento biológico seco",
+          "quantity": 20,
+          "unit": "g",
+          "scaling": "linear",
+          "original": "20g de fermento biológico seco",
+          "page": 85
+        },
+        {
+          "key": "agua-morna",
+          "ingredient": "agua-morna",
+          "name": "água morna",
+          "quantity": 200,
+          "unit": "ml",
+          "scaling": "linear",
+          "original": "200ml de água morna",
+          "page": 85
+        }
+      ],
+      "steps": [
+        {
+          "text": "Misture a farinha, o fermento e a água morna até formar uma massa grossa e pegajosa; adicione mais água morna se necessário.",
+          "original": "Misture muito bem os 3 ingredientes, (farinha, fermento e a água morna), até formar uma massa grossa e pegajosa. Adicione mais água morna caso seja necessário para ficar bem pegajosa.",
+          "page": 86
+        },
+        {
+          "text": "Cubra e deixe descansar por 30 a 40 minutos em local abafado e seco.",
+          "original": "Cubra bem e deixe descansando por 30 a 40 minutos em local abafado e seco.",
+          "page": 86
+        }
+      ]
+    },
+    {
+      "key": "massa",
+      "role": "massa",
+      "title": "Massa do Chocotone",
+      "pages": [
+        85,
+        86
+      ],
+      "ingredients": [
+        {
+          "key": "farinha-de-trigo",
+          "ingredient": "farinha-de-trigo",
+          "name": "farinha de trigo",
+          "quantity": 800,
+          "unit": "g",
+          "scaling": "linear",
+          "original": "800g de farinha de trigo",
+          "page": 85
+        },
+        {
+          "key": "acucar-refinado",
+          "ingredient": "acucar-refinado",
+          "name": "açúcar refinado",
+          "quantity": 150,
+          "unit": "g",
+          "scaling": "linear",
+          "original": "150g de açúcar refinado",
+          "page": 85
+        },
+        {
+          "key": "ingrediente-tggf46",
+          "name": "Leite em pó",
+          "quantity": 5,
+          "unit": "colheres (sopa)",
+          "scaling": "linear",
+          "original": "5 colheres (sopa) de Leite em pó",
+          "page": 85
+        },
+        {
+          "key": "sal",
+          "ingredient": "sal",
+          "name": "sal",
+          "quantity": null,
+          "unit": null,
+          "quantity_text": "1 pitadinha",
+          "scaling": "linear",
+          "original": "1 pitadinha de sal",
+          "page": 85
+        },
+        {
+          "key": "gema-de-ovo",
+          "ingredient": "gema-de-ovo",
+          "name": "gemas",
+          "quantity": 10,
+          "unit": "unidades",
+          "scaling": "linear",
+          "original": "10 gemas",
+          "page": 85
+        },
+        {
+          "key": "agua-morna",
+          "ingredient": "agua-morna",
+          "name": "água morna",
+          "quantity": 200,
+          "unit": "ml",
+          "scaling": "linear",
+          "original": "200ml de água morna",
+          "page": 85
+        },
+        {
+          "key": "essencia-de-baunilha",
+          "ingredient": "essencia-de-baunilha",
+          "name": "essência de baunilha",
+          "quantity": 3,
+          "unit": "colheres (sopa)",
+          "scaling": "linear",
+          "original": "3 colheres (sopa) de essência de baunilha",
+          "page": 85
+        },
+        {
+          "key": "essencia-de-panetone",
+          "ingredient": "essencia-de-panetone",
+          "name": "essência de Panetone",
+          "quantity": 15,
+          "unit": "ml",
+          "scaling": "linear",
+          "original": "15ml de essência de Panetone",
+          "page": 85
+        },
+        {
+          "key": "limao",
+          "ingredient": "limao",
+          "name": "raspas de limão",
+          "quantity": 2,
+          "unit": "unidades",
+          "scaling": "linear",
+          "original": "Raspas de 2 limões + 2 laranjas",
+          "page": 85
+        },
+        {
+          "key": "laranja",
+          "ingredient": "laranja",
+          "name": "raspas de laranja",
+          "quantity": 2,
+          "unit": "unidades",
+          "scaling": "linear",
+          "original": "Raspas de 2 limões + 2 laranjas",
+          "page": 85
+        },
+        {
+          "key": "ingrediente-jf93lo",
+          "name": "margarina ou manteiga sem sal",
+          "quantity": 160,
+          "unit": "g",
+          "scaling": "linear",
+          "original": "160g de margarina ou manteiga (sem sal)",
+          "page": 85
+        },
+        {
+          "key": "chocolate-em-gotas",
+          "ingredient": "chocolate-em-gotas",
+          "name": "chocolate em gotas ou chocolate em barra picado",
+          "quantity": 350,
+          "unit": "g",
+          "scaling": "linear",
+          "original": "350g de chocolate em gotas ou chocolate em barra picado",
+          "page": 85
+        }
+      ],
+      "steps": [
+        {
+          "text": "Coloque a água morna em uma vasilha e acrescente as essências de baunilha e de Panetone.",
+          "original": "Numa vasilha, coloque a água morna e acrescente as essências de baunilha e de Panetone.",
+          "page": 86
+        },
+        {
+          "text": "Em outra tigela, misture a farinha, o açúcar, o sal, o leite em pó, as gemas e a esponja descansada até formar uma farofa. Despeje na mistura líquida e sove por cerca de 10 minutos.",
+          "original": "Em uma outra tigela, adicione a farinha, o açúcar, o sal, o leite em pó, as gemas e a esponja preparada antes e já descansada, até formar uma certa “farofa”. Em seguida despeje a ‘’farofa’’ na mistura líquida de água com as essências e sove por uns 10 minutos.",
+          "page": 86
+        },
+        {
+          "text": "Acrescente a margarina e sove até atingir o ponto de véu, esticando uma pequena porção até ficar transparente sem rasgar.",
+          "original": "Acrescente a margarina e sove até chegar no ponto de véu, (pegue uma pequena porção da massa com as mãos untadas com óleo e estique com cuidado, a massa deve abrir até ficar transparente, não pode rasgar).",
+          "page": 86
+        },
+        {
+          "text": "Adicione as raspas de limão e laranja e misture até incorporar.",
+          "original": "Depois adicione as raspas de limão e laranja e mexa bem até incorporar totalmente. A massa é macia e pegajosa, e suas mãos precisam do óleo para mexer.",
+          "page": 86
+        },
+        {
+          "text": "Abra a massa em superfície untada com óleo e espalhe as gotas de chocolate; enrole e modele formando uma bola.",
+          "original": "Agora coloque essa massa em uma superfície untada com óleo e abra com as mãos espalhando as gotas de chocolate. Enrole bem e modele formando uma bola",
+          "page": 86
+        },
+        {
+          "text": "Coloque em uma tigela grande untada com óleo e deixe descansar entre 1h30 e 2h.",
+          "original": "coloque em uma tigela bem grande untada com óleo. Deixe descansar entre 1h30m à 2h.",
+          "page": 87
+        },
+        {
+          "text": "Volte para a superfície untada, divida em duas partes do mesmo tamanho e coloque nas formas até a metade.",
+          "original": "Depois disso, volte para a superfície untada e dívida em duas partes do mesmo tamanho. A massa deve estar até na metade da forma de papel.",
+          "page": 87
+        },
+        {
+          "text": "Aguarde a massa crescer até a borda e asse em forno preaquecido a 180 graus por aproximadamente 30 minutos.",
+          "original": "Aguarde a massa crescer até a borda e leve para assar no forno pré-aquecido em 180 graus por aproximadamente 30 minutos.",
+          "page": 87
+        },
+        {
+          "text": "Asse em forma de Panetone de 500g (13cm x 9,5cm).",
+          "original": "Asse em forma de Panetone de 500g (13cm x 9,5cm)",
+          "page": 87
+        }
+      ]
+    },
+    {
+      "key": "recheio",
+      "role": "recheio",
+      "title": "Recheio de Laka",
+      "pages": [
+        87,
+        88
+      ],
+      "ingredients": [
+        {
+          "key": "leite-condensado",
+          "ingredient": "leite-condensado",
+          "name": "leite condensado",
+          "quantity": 1,
+          "unit": "unidade",
+          "scaling": "linear",
+          "original": "1 leite condensado",
+          "page": 87
+        },
+        {
+          "key": "creme-de-leite-uht",
+          "ingredient": "creme-de-leite-uht",
+          "name": "creme de leite",
+          "quantity": 1,
+          "unit": "unidade",
+          "scaling": "linear",
+          "original": "1 creme de leite",
+          "page": 87
+        },
+        {
+          "key": "ingrediente-l9v292",
+          "name": "chocolate Laka picado",
+          "quantity": 100,
+          "unit": "g",
+          "scaling": "linear",
+          "original": "100g de chocolate Laka picado",
+          "page": 87
+        }
+      ],
+      "steps": [
+        {
+          "text": "Misture o leite condensado e o creme de leite em panela de fundo grosso.",
+          "original": "Misture o leite condensado e o creme de leite em panela de fundo grosso.",
+          "page": 87
+        },
+        {
+          "text": "Leve ao fogo e mexa por 5 minutos; adicione o chocolate Laka picado e continue mexendo até engrossar e aparecer o fundo da panela. Deixe esfriar.",
+          "original": "Leve ao fogo e mexa por 5 minutos; adicione o chocolate Laka picado e continue mexendo até engrossar e aparecer o fundo da panela. Deixe esfriar.",
+          "page": 88
+        }
+      ]
+    },
+    {
+      "key": "montagem",
+      "role": "montagem",
+      "title": "Montagem — Chocotone Laka",
+      "pages": [
+        87,
+        88
+      ],
+      "ingredients": [],
+      "steps": [
+        {
+          "text": "Corte o topo do Chocotone e reserve.",
+          "original": "Comece cortando o topo do Chocotone e reserve.",
+          "page": 87
+        },
+        {
+          "text": "Abra uma cavidade com faca e colher, deixando um dedo de parede para manter a estrutura.",
+          "original": "Em seguida abra uma cavidade no Chocotone com a ajuda de uma faca e uma colher, (sempre deixe um dedo de parede para o seu Chocotone não perder a estrutura e quebrar).",
+          "page": 88
+        },
+        {
+          "text": "Adicione o recheio com uma colher ou saco de confeitar.",
+          "original": "Depois adicione o recheio com uma colher ou um saco de confeitar. Finalize com pedaços de chocolate Laka.",
+          "page": 88
+        },
+        {
+          "text": "Passe um pouco do recheio nas beiradas para colar a tampa, quando indicado na receita.",
+          "original": "Passe um pouquinho do recheio nas beiradinhas para “colar” a tampa.",
+          "page": 88
+        },
+        {
+          "text": "Recoloque a tampa e finalize conforme a decoração indicada na receita.",
+          "original": "Por último coloque a tampa do seu Panetone/Chocotone e decore da maneira de sua preferência, usando sua criatividade.",
+          "page": 88
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "field": "yield",
+      "severity": "warning",
+      "page": 86,
+      "message": "A apostila informa rendimento de 5 unidades de 500g, mas também orienta dividir a massa em duas partes. Confirmar o rendimento na revisão."
+    },
+    {
+      "field": "source_pages",
+      "severity": "warning",
+      "page": 85,
+      "message": "Paginação baseada na transcrição enviada; conferir no PDF original antes da publicação."
+    }
+  ]
+}
