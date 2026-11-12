@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { BookOpen, CalendarHeart, House, Search, Settings, ShoppingBasket, Sparkles, Timer, Trophy, User, type LucideIcon } from 'lucide-react';
+import { BookOpen, BookOpenText, CalendarHeart, House, Search, Settings, ShoppingBasket, Sparkles, Timer, Trophy, User, type LucideIcon } from 'lucide-react';
 import { useSession } from '@/data/session';
 import { useTable } from '@/data/hooks';
 import { formatDate, initials } from '@/lib/format';
@@ -25,6 +25,7 @@ const SPACE: NavItem[] = [
   { href: '/lista', label: 'Lista de compras', icon: ShoppingBasket },
   { href: '/chef', label: 'Chef IA', icon: Sparkles },
   { href: '/desafios', label: 'Desafios', icon: Trophy },
+  { href: '/materiais', label: 'Guias e dicas', icon: BookOpenText },
 ];
 const ACCOUNT: NavItem[] = [
   { href: '/temporizadores', label: 'Temporizadores', icon: Timer },
