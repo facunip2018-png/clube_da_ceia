@@ -11,19 +11,18 @@
   "description": "Chocotone com canela, gotas de chocolate e recheio de churros.",
   "yield": {
     "quantity": 5,
-    "unit": "Chocotones",
+    "unit": "Chocotone",
     "unit_plural": "Chocotones",
     "detail": "500g cada; recheio rende 1 Chocotone",
     "text": "5 Chocotones de 500g; recheio para 1 Chocotone de 500g",
     "page": 27
   },
   "times": {
-    "rest_minutes": 120,
     "bake_minutes": 30
   },
   "source_pages": {
     "start": 25,
-    "end": 28
+    "end": 27
   },
   "page_ref_verified": false,
   "tags": [
