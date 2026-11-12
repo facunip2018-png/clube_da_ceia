@@ -37,14 +37,14 @@ describe('estrutura e carga', () => {
     expect(rows.filter((r) => !r.rowsecurity)).toEqual([]);
   });
 
-  it('carrega o catálogo sem inventar conteúdo: 62 itens, 1 com ficha estruturada', async () => {
+  it('carrega o catálogo sem inventar conteúdo: 62 itens, 26 com ficha estruturada', async () => {
     const [stats] = await db.sql<Record<string, number>>(`
       select count(*)::int as total,
              count(*) filter (where content_state = 'structured')::int as structured,
              count(*) filter (where status = 'published')::int as published,
              count(*) filter (where status = 'pending_permission')::int as blocked
       from public.recipes`);
-    expect(stats).toEqual({ total: 62, structured: 1, published: 0, blocked: 10 });
+    expect(stats).toEqual({ total: 62, structured: 26, published: 0, blocked: 10 });
     // receitas sem PDF não têm ingredientes nem etapas
     const [orphans] = await db.sql<{ n: number }>(`
       select count(*)::int as n from public.recipe_ingredients i
@@ -496,7 +496,7 @@ describe('instalação pelo arquivo único', () => {
         expect(await count(single, table), table).toBeGreaterThan(0);
       }
       expect(await count(single, 'recipes')).toBe(62);
-      expect(await count(single, 'recipe_steps')).toBe(16);
+      expect(await count(single, 'recipe_steps')).toBe(449);
       const [{ n }] = await single.sql<{ n: number }>(`select count(*)::int as n from pg_tables where schemaname = 'public' and rowsecurity`);
       expect(n).toBe(31);
       const [{ policies }] = await single.sql<{ policies: number }>(`select count(*)::int as policies from pg_policies where schemaname in ('public', 'storage')`);
