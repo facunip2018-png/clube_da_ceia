@@ -34,7 +34,6 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
     if (document.commercial_permission === 'confirmed' && permission !== 'confirmed' && published > 0) {
       if (!(await confirm({ title: 'Retirar a permissão?', message: `Isso tira do ar ${published} receita(s) publicada(s) deste material imediatamente.`, confirmLabel: 'Retirar permissão', danger: true }))) return;
     }
-    if (permission === 'confirmed' && !notes.trim()) return fail(new Error('Registre em “Observações” como a permissão foi obtida (ex.: autorização por escrito, licença adquirida).'));
     await act(() => store.update('source_documents', { id: document.id }, { commercial_permission: permission, permission_notes: notes.trim() || null }), {
       tables: [...TABLES],
       success: permission === 'confirmed' ? 'Permissão confirmada' : 'Permissão atualizada',
@@ -85,15 +84,13 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
 
       <div className="formgrid" style={{ marginTop: 14 }}>
         <div className="group">
-          <label htmlFor={`perm-${document.id}`}>Permissão de uso comercial</label>
+          <label htmlFor={`perm-${document.id}`}>Autorização para uso no Clube</label>
           <select
             id={`perm-${document.id}`}
             className="select"
             value={permission}
             onChange={(e) => {
               const next = e.target.value as SourceDocument['commercial_permission'];
-              // ao confirmar, a justificativa precisa ser escrita de novo (não vale a observação anterior)
-              if (next === 'confirmed' && document.commercial_permission !== 'confirmed' && notes === (document.permission_notes ?? '')) setNotes('');
               setPermission(next);
             }}
           >
@@ -101,8 +98,8 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
           </select>
         </div>
         <div className="group">
-          <label htmlFor={`notes-${document.id}`}>Observações da permissão</label>
-          <input id={`notes-${document.id}`} className="field" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={permission === 'confirmed' ? 'Como a permissão foi obtida? (obrigatório)' : 'Ex.: autorização por e-mail da autora em 12/11/2026'} />
+          <label htmlFor={`notes-${document.id}`}>Observação (opcional)</label>
+          <input id={`notes-${document.id}`} className="field" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Ex.: material de minha autoria ou autorização concedida pelo autor" />
         </div>
       </div>
       <div className="row" style={{ marginTop: 12 }}>
@@ -133,10 +130,10 @@ export default function AdminDocuments() {
 
   return (
     <>
-      <PageHead eyebrow="Materiais de origem" title="Documentos." sub="Os PDFs originais ficam em um cofre privado, acessível só a administradores. Nenhuma receita entra no ar sem a permissão comercial do material confirmada." />
+      <PageHead eyebrow="Materiais de origem" title="Documentos." sub="Os PDFs originais ficam em um cofre privado, acessível só a administradores. Confirme a autorização uma vez por material. O sistema registra automaticamente quem confirmou e quando." />
       <div style={{ marginBottom: 16 }}>
         <Notice>
-          <b>Permissão comercial:</b> confirme apenas quando houver autorização do autor ou licença que permita o uso no Clube, e registre como ela foi obtida. Se a permissão for retirada, as receitas daquele material saem do ar automaticamente.
+          <b>Autorização:</b> confirme uma única vez por material quando ele for de sua autoria ou houver licença/autorização para uso no Clube. O sistema registra quem confirmou e a data. Se a autorização for retirada, as receitas publicadas daquele material saem do ar automaticamente.
         </Notice>
       </div>
       <div className="stack">
