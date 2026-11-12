@@ -69,10 +69,11 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
       const path = `${document.slug}/${hash.slice(0, 12)}.pdf`;
       const { error } = await supabase.storage.from('source-documents').upload(path, file, { contentType: 'application/pdf', upsert: true });
       if (error) throw error;
-      await act(() => store.update('source_documents', { id: document.id }, { file_status: 'stored', storage_path: path, sha256: hash, file_name: document.file_name ?? file.name }), {
+      const saved = await act(() => store.update('source_documents', { id: document.id }, { file_status: 'stored', storage_path: path, sha256: hash, file_name: file.name }), {
         tables: [...TABLES],
-        success: 'PDF disponível para os assinantes',
+        success: 'PDF enviado. Iniciando leitura automática…',
       });
+      if (saved) await importPdf();
     } catch (error) {
       fail(error);
     } finally {
