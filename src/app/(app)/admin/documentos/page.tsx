@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { FileText, FileUp, Save } from 'lucide-react';
 import { useTable } from '@/data/hooks';
 import { useSession } from '@/data/session';
@@ -11,7 +12,12 @@ import { useDialog } from '@/components/dialogs';
 import type { Recipe, SourceDocument } from '@/lib/types';
 
 const TABLES = ['source_documents', 'recipes', 'source_document_refs', 'admin_audit_logs'] as const;
-const MAX_PDF_BYTES = 50 * 1024 * 1024;
+const MAX_PDF_BYTES = 35 * 1024 * 1024;
+const MAX_EXTRACTED_CHARACTERS = 8_000_000;
+
+if (typeof window !== 'undefined') {
+  GlobalWorkerOptions.workerSrc = '/pdf.worker.mjs';
+}
 
 async function sha256Hex(file: File): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
@@ -62,13 +68,75 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
   }
 
   async function extractText() {
-    if (extracting || importing) return;
+    if (extracting || importing || !supabase) return;
     setExtracting(true);
     try {
-      const response = await fetch(`/api/admin/documentos/${document.id}/extrair-texto`, { method: 'POST' });
-      const result = await response.json() as { error?: string; pages?: number; characters?: number };
-      if (!response.ok) throw new Error(result.error || 'Não foi possível extrair o texto do PDF.');
-      toast(`Texto extraído: ${result.pages ?? 0} páginas e ${(result.characters ?? 0).toLocaleString('pt-BR')} caracteres. O conteúdo já pode ser consultado no banco de dados.`);
+      const { data: access, error: accessError } = await supabase.rpc('my_access');
+      if (accessError || !access?.is_admin) throw new Error('Apenas administradores podem extrair PDFs.');
+
+      if (document.file_status !== 'stored' || !document.storage_path) {
+        throw new Error('Este documento ainda não possui um PDF armazenado.');
+      }
+
+      const { data: file, error: fileError } = await supabase.storage
+        .from('source-documents')
+        .download(document.storage_path);
+      if (fileError || !file) throw new Error('Não foi possível abrir o PDF privado no Supabase.');
+      if (file.size > MAX_PDF_BYTES) throw new Error('O PDF ultrapassa o limite de 35 MB para extração.');
+
+      const pdf = await getDocument({
+        data: new Uint8Array(await file.arrayBuffer()),
+        useSystemFonts: true,
+        isEvalSupported: false,
+        disableFontFace: true,
+      }).promise;
+
+      const pages: { source_document_id: string; page_number: number; page_text: string }[] = [];
+      let characters = 0;
+      try {
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+          const page = await pdf.getPage(pageNumber);
+          const content = await page.getTextContent();
+          const text = content.items
+            .map((item) => {
+              if (!('str' in item) || typeof item.str !== 'string') return '';
+              return item.str + ('hasEOL' in item && item.hasEOL ? '\\n' : ' ');
+            })
+            .join('')
+            .replace(/[ \\t]+/g, ' ')
+            .replace(/ *\\n */g, '\\n')
+            .trim();
+          characters += text.length;
+          if (characters > MAX_EXTRACTED_CHARACTERS) {
+            throw new Error('O texto extraído ultrapassou o limite seguro de 8 milhões de caracteres.');
+          }
+          pages.push({ source_document_id: document.id, page_number: pageNumber, page_text: text });
+          page.cleanup();
+        }
+      } finally {
+        await pdf.destroy();
+      }
+
+      const pagesWithText = pages.filter((page) => page.page_text.length > 0).length;
+      if (characters < 80 || pagesWithText === 0) {
+        throw new Error('Este PDF parece ser formado por páginas escaneadas ou imagens, sem texto selecionável. A extração sem OCR não gravou nenhum resultado.');
+      }
+
+      for (let start = 0; start < pages.length; start += 100) {
+        const { error } = await supabase
+          .from('document_extracted_pages')
+          .upsert(pages.slice(start, start + 100), { onConflict: 'source_document_id,page_number' });
+        if (error) throw error;
+      }
+
+      const { error: cleanupError } = await supabase
+        .from('document_extracted_pages')
+        .delete()
+        .eq('source_document_id', document.id)
+        .gt('page_number', pages.length);
+      if (cleanupError) throw cleanupError;
+
+      toast(`Texto extraído: ${pages.length} páginas, ${pagesWithText} com texto e ${characters.toLocaleString('pt-BR')} caracteres. O conteúdo foi gravado no Supabase.`);
     } catch (error) {
       fail(error);
     } finally {
