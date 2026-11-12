@@ -157,10 +157,10 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       return NextResponse.json({ error: 'Envie o PDF antes de iniciar a leitura.' }, { status: 409 });
     }
 
-    const token = process.env.OPENROUTER_API_KEY;
-    if (!token) {
+    const { data: token, error: tokenError } = await supabase.rpc('admin_get_openrouter_key');
+    if (tokenError || typeof token !== 'string' || !token.trim()) {
       return NextResponse.json({
-        error: 'A leitura automática está pronta, mas falta cadastrar OPENROUTER_API_KEY nas variáveis de ambiente da Vercel.',
+        error: 'A leitura automática está pronta, mas falta cadastrar a chave do OpenRouter no cofre seguro do Supabase.',
         code: 'OPENROUTER_NOT_CONFIGURED',
       }, { status: 503 });
     }
