@@ -36,8 +36,7 @@ export function CollectionCard({ summary, priority }: { summary: CollectionSumma
   const { access } = useSession();
   const { collection, recipes, stat } = summary;
   const published = recipes.filter((r) => r.status === 'published');
-  const inPreparation = stat?.in_preparation ?? 0;
-  const state = published.length ? 'open' : inPreparation ? 'curation' : 'waiting';
+  const state = published.length ? 'open' : 'waiting';
   const meta = access.is_admin
     ? `${plural(recipes.length, 'item', 'itens')} · ${published.length} no ar`
     : state === 'open'
@@ -50,7 +49,6 @@ export function CollectionCard({ summary, priority }: { summary: CollectionSumma
       <Photo src={collection.cover_image} alt="" sizes="(max-width: 600px) 50vw, (max-width: 1100px) 50vw, 33vw" priority={priority}>
         <div className="tl">
           {state === 'open' && <span className="pill onphoto">{countLabel(published)}</span>}
-          {state === 'curation' && <span className="pill gold">Em curadoria</span>}
           {state === 'waiting' && <span className="pill onphoto">Em breve</span>}
         </div>
       </Photo>
