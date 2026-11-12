@@ -80,6 +80,18 @@ export interface SourceDocumentRef {
   language: string;
 }
 
+export interface SupportMaterial extends Timestamps {
+  id: string;
+  slug: string;
+  kind: 'utensilios' | 'ingredientes' | 'dicas' | 'orientacoes';
+  title: string;
+  body: string;
+  source_document_id: string | null;
+  source_page: number | null;
+  position: number;
+  is_visible: boolean;
+}
+
 export interface Recipe extends Timestamps {
   id: string;
   slug: string;
@@ -478,6 +490,7 @@ export interface Tables {
   collections: Collection;
   source_documents: SourceDocument;
   source_document_refs: SourceDocumentRef;
+  support_materials: SupportMaterial;
   recipes: Recipe;
   recipe_components: RecipeComponent;
   ingredients: Ingredient;
