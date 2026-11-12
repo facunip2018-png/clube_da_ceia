@@ -13,7 +13,7 @@
 | --- | --- | --- |
 | Pavês | `receita-de-pave-floresta-negra-com-creme-danete-…pdf` | **Recebido e estruturado** (1 ficha, 3 partes, 12 ingredientes, 16 etapas, 2 temporizadores, 23 pontos de revisão). O PDF não traz declaração de licença: permissão **a confirmar**. |
 | Pavês | `11-receta-de-pave-completo-y-revisado.pdf` | **Falta enviar.** 11 itens catalogados só pelo título. Original em espanhol: tradução seguirá para revisão. |
-| Panetones & Chocotones | `receitas-criativas-de-panetones-e-chocotones-para-o-natal.pdf` | **Falta enviar.** 25 itens catalogados só pelo título. |
+| Panetones & Chocotones | `Receitas 02 de panetones.pdf` | **Recebido parcialmente por transcrição (páginas 8–33).** 4 fichas estruturadas em revisão (Panetone Tradicional, Chocotone Tradicional, Chocotone de Churros e Chocotone de Ninho); os demais itens continuam apenas catalogados. Páginas e rendimentos precisam de conferência. |
 | Rabanadas Recheadas | `rabanadas-recheadas-d-amp-cc-2021.pdf` | **Falta enviar.** 10 itens (bases, calda, fritura e recheios) bloqueados em *aguardando permissão*. O montador usa combinações ainda não verificadas. |
 | Tortas Doces | `tortas-doces.pdf` | **Falta enviar.** 15 itens catalogados só pelo título. |
 | Manjar de Coco | — | Coleção criada, sem receitas. Aguardando PDF. |
