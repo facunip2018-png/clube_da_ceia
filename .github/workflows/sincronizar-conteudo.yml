@@ -1,0 +1,43 @@
+name: Sincronizar conteúdo estruturado
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "content/**"
+      - "scripts/content-build.mjs"
+      - ".github/workflows/sincronizar-conteudo.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  gerar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Instalar dependências
+        run: npm ci
+      - name: Gerar fichas, seed e dados de demonstração
+        run: npm run content:build
+      - name: Conferir conteúdo gerado
+        run: npm run content:check
+      - name: Salvar arquivos gerados no GitHub
+        run: |
+          if git diff --quiet; then
+            echo "Arquivos gerados já estão atualizados."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/seed.sql supabase/setup_completo.sql src/server/demo-data.generated.json
+          git commit -m "Atualiza dados gerados das receitas"
+          git push
