@@ -29,7 +29,8 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "swr": "^2.5.1",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "4.10.38"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.16",
