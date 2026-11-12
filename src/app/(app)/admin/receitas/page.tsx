@@ -20,6 +20,8 @@ export default function AdminRecipes() {
   const act = useAdminAction();
   const { rows: recipes } = useTable('recipes', { order: [['position', 'asc']] });
   const { rows: collections } = useTable('collections', { order: [['position', 'asc']] });
+  const recipeRows = recipes ?? [];
+  const collectionRows = collections ?? [];
   const [collection, setCollection] = useState('all');
   const [q, setQ] = useState('');
   const [newTitle, setNewTitle] = useState('');
@@ -38,10 +40,10 @@ export default function AdminRecipes() {
   async function createRecipe(event: FormEvent) {
     event.preventDefault();
     const title = newTitle.trim();
-    const collectionId = newCollection || collections[0]?.id;
+    const collectionId = newCollection || collectionRows[0]?.id;
     const baseSlug = makeSlug(title);
     if (!title || !collectionId || !baseSlug) return;
-    const used = new Set(recipes.map((recipe) => recipe.slug));
+    const used = new Set(recipeRows.map((recipe) => recipe.slug));
     let slug = baseSlug;
     let suffix = 2;
     while (used.has(slug)) slug = `${baseSlug}-${suffix++}`;
@@ -57,7 +59,7 @@ export default function AdminRecipes() {
         rest_minutes: null, chill_is_minimum: false, measure_note: null,
         source_page_start: null, source_page_end: null, source_pages_extra: [],
         page_ref_verified: false, content_state: 'catalogued', status: 'draft',
-        position: recipes.length + 1, is_featured: false, reviewed_by: null,
+        position: recipeRows.length + 1, is_featured: false, reviewed_by: null,
         reviewed_at: null, published_at: null,
       }),
       { tables: ['recipes', 'admin_audit_logs'], success: 'Receita criada. Agora você pode completar a ficha.' },
@@ -79,9 +81,9 @@ export default function AdminRecipes() {
         <div className="toolbar">
           <input className="field" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Nome da receita" aria-label="Nome da receita" required />
           <select className="select" value={newCollection || collections[0]?.id || ''} onChange={(e) => setNewCollection(e.target.value)} aria-label="Categoria" required>
-            {collections.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            {collectionRows.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
           </select>
-          <button className="btn dark" type="submit" disabled={saving || !newTitle.trim() || !collections.length}><Plus /> {saving ? 'Criando…' : 'Criar receita'}</button>
+          <button className="btn dark" type="submit" disabled={saving || !newTitle.trim() || !collectionRows.length}><Plus /> {saving ? 'Criando…' : 'Criar receita'}</button>
         </div>
         <p className="muted small">A receita começa como rascunho e só aparece para assinantes quando tiver conteúdo completo e for publicada.</p>
       </form>
@@ -100,7 +102,7 @@ export default function AdminRecipes() {
             {list.map((recipe) => (
               <tr key={recipe.id} className="clickable" onClick={() => router.push(`/admin/receitas/${recipe.id}`)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && router.push(`/admin/receitas/${recipe.id}`)}>
                 <td className="strong">{recipe.title}</td>
-                <td>{collections.find((item) => item.id === recipe.collection_id)?.name ?? 'Sem categoria'}</td>
+                <td>{collectionRows.find((item) => item.id === recipe.collection_id)?.name ?? 'Sem categoria'}</td>
                 <td>{recipe.content_state === 'structured' ? <span className="pill ok">Completa</span> : <span className="pill muted">Aguardando conteúdo</span>}</td>
                 <td>{recipe.status === 'published' ? <span className="pill ok">No ar</span> : recipe.status === 'archived' ? <span className="pill muted">Arquivada</span> : <span className="pill warn">Não publicada</span>}</td>
               </tr>
