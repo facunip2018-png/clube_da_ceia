@@ -221,7 +221,7 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
               <FileUp /> {uploading ? 'Enviando…' : document.file_status === 'stored' ? 'Substituir PDF' : 'Enviar PDF'}
             </button>
             {document.file_status === 'stored' && (
-              <button type="button" className="btn dark sm" disabled={uploading || importing || extracting} onClick={readAndImportPdf}>
+              <button type="button" className="btn dark sm" disabled={uploading || importing || extracting} onClick={() => readAndImportPdf()}>
                 {extracting ? 'Extraindo texto…' : importing ? 'Organizando e cadastrando…' : 'Ler PDF e cadastrar receitas'}
               </button>
             )}
