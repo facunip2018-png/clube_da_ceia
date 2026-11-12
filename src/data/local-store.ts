@@ -28,7 +28,7 @@ const DB_KEY = 'ccp.demo.db.v1';
 const PREMIUM = new Set(['recipe_components', 'recipe_ingredients', 'recipe_steps', 'recipe_step_ingredients', 'recipe_step_timers', 'recipe_notes', 'recipe_compatibilities']);
 const PUBLIC = new Set(['seasons', 'collections', 'recipes', 'recipe_tags', 'challenges', 'source_document_refs']);
 const ADMIN_ONLY = new Set(['source_documents', 'review_flags', 'admin_audit_logs', 'payment_transactions']);
-const CATALOG = new Set(['seasons', 'collections', 'source_documents', 'recipes', 'recipe_components', 'ingredients', 'recipe_ingredients', 'recipe_steps', 'recipe_step_ingredients', 'recipe_step_timers', 'recipe_notes', 'recipe_tags', 'recipe_compatibilities', 'review_flags', 'challenges']);
+const CATALOG = new Set(['seasons', 'collections', 'source_documents', 'recipes', 'recipe_components', 'ingredients', 'recipe_ingredients', 'recipe_steps', 'recipe_step_ingredients', 'recipe_step_timers', 'recipe_notes', 'recipe_tags', 'recipe_compatibilities', 'review_flags', 'challenges', 'support_materials']);
 const OWNED = new Set(['recipe_favorites', 'meal_plans', 'plan_recipes', 'plan_tasks', 'shopping_lists', 'shopping_items', 'cooking_sessions', 'user_challenges', 'challenge_submissions', 'ai_conversations', 'ai_messages', 'orders', 'memberships']);
 const SERVER_WRITTEN = new Set(['user_challenges', 'orders', 'payment_transactions', 'admin_audit_logs']);
 const NEEDS_ACCESS = new Set(['meal_plans', 'cooking_sessions', 'ai_conversations', 'ai_messages']);
@@ -176,6 +176,7 @@ export class LocalStore implements DataStore {
       case 'recipe_tags': return admin || this.published(row.recipe_id);
       case 'challenges': return admin || row.is_active;
       case 'source_document_refs': return true;
+      case 'support_materials': return admin || (this.hasAccess() && row.is_visible);
       case 'ingredients': return this.hasAccess();
       case 'profiles': return admin || row.id === this.userId;
       case 'challenge_submissions':
