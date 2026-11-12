@@ -139,5 +139,15 @@
     "slug": "chocolate-em-barra",
     "name": "Chocolate em barra",
     "category": "confeitaria"
+  },
+  {
+    "slug": "canela-em-po",
+    "name": "Canela em pó",
+    "category": "mercearia"
+  },
+  {
+    "slug": "doce-de-leite",
+    "name": "Doce de leite",
+    "category": "laticinios"
   }
 ]
