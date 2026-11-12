@@ -223,50 +223,61 @@ export default function AdminRecipeEditor() {
         <div className="grow">
           <div className="eyebrow">{collections?.[0]?.name} · {pageRange(recipe.source_page_start, recipe.source_page_end) ?? 'página a confirmar'}</div>
           <h1>{recipe.title}</h1>
+          <p className="sub">Edite os dados, ingredientes e modo de preparo abaixo. As informações originais são preservadas para conferência.</p>
           {recipe.original_title && recipe.original_title !== recipe.title && <p className="sub">Título original: {recipe.original_title}{recipe.original_language !== 'pt-BR' ? ` (${recipe.original_language})` : ''}</p>}
         </div>
         <StatusPill status={recipe.status} />
       </div>
 
-      <div className="twocol">
-        <section className="panel">
-          <div className="eyebrow">Publicação</div>
-          <h2 style={{ margin: '6px 0 14px' }}>Requisitos para entrar no ar</h2>
-          <ul className="checklist">
-            {checks.map((check) => (
-              <li key={check.label} className={check.ok ? 'ok' : ''}><span className="mark">{check.ok ? <Check /> : <X />}</span><div>{check.label}</div></li>
-            ))}
-          </ul>
-          <hr className="divider" />
-          {recipe.status === 'pending_permission' ? (
-            <Notice>Esta receita está bloqueada até a permissão comercial do documento ser confirmada em <Link href="/admin/documentos"><b>Documentos</b></Link>.</Notice>
-          ) : (
-            <div className="row">
-              {statusActions(recipe.status).map((action) => (
-                <button key={action.to} type="button" className={`btn sm ${action.tone === 'primary' ? 'primary' : action.tone === 'danger' ? 'danger' : 'outline'}`}
-                  onClick={() => act(() => store.update('recipes', { id: recipe.id }, { status: action.to }), { tables: [...TABLES], success: `Situação: ${action.label}` })}>
-                  {action.label}
-                </button>
+      <details className="panel" style={{ marginTop: 18 }}>
+        <summary style={{ cursor: 'pointer', fontWeight: 700, color: 'var(--forest)' }}>
+          Publicação e conferência da receita
+          <span className="muted small" style={{ display: 'block', fontWeight: 400, marginTop: 4 }}>
+            Abra somente quando precisar conferir autorização, revisão e liberação para assinantes.
+          </span>
+        </summary>
+        <div style={{ marginTop: 18 }}>
+        <div className="twocol">
+          <section className="panel">
+            <div className="eyebrow">Publicação</div>
+            <h2 style={{ margin: '6px 0 14px' }}>Requisitos para entrar no ar</h2>
+            <ul className="checklist">
+              {checks.map((check) => (
+                <li key={check.label} className={check.ok ? 'ok' : ''}><span className="mark">{check.ok ? <Check /> : <X />}</span><div>{check.label}</div></li>
               ))}
-            </div>
-          )}
-          {document && (
-            <p className="muted small" style={{ marginTop: 12 }}>
-              Documento: <Link href="/admin/documentos"><b>{document.title}</b></Link>{document.author ? ` — ${document.author}` : ''}.
-            </p>
-          )}
-        </section>
-
-        <section className="panel">
-          <div className="eyebrow">Revisão humana</div>
-          <h2 style={{ margin: '6px 0 14px' }}>Pontos de revisão</h2>
-          {sortedFlags.length ? (
-            <div className="stack">{sortedFlags.map((flag) => <FlagRow key={flag.id} flag={flag} />)}</div>
-          ) : (
-            <p className="sub">Nenhum ponto de revisão registrado para esta receita.</p>
-          )}
-        </section>
-      </div>
+            </ul>
+            <hr className="divider" />
+            {recipe.status === 'pending_permission' ? (
+              <Notice>Esta receita está bloqueada até a permissão comercial do documento ser confirmada em <Link href="/admin/documentos"><b>Documentos</b></Link>.</Notice>
+            ) : (
+              <div className="row">
+                {statusActions(recipe.status).map((action) => (
+                  <button key={action.to} type="button" className={`btn sm ${action.tone === 'primary' ? 'primary' : action.tone === 'danger' ? 'danger' : 'outline'}`}
+                    onClick={() => act(() => store.update('recipes', { id: recipe.id }, { status: action.to }), { tables: [...TABLES], success: `Situação: ${action.label}` })}>
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {document && (
+              <p className="muted small" style={{ marginTop: 12 }}>
+                Documento: <Link href="/admin/documentos"><b>{document.title}</b></Link>{document.author ? ` — ${document.author}` : ''}.
+              </p>
+            )}
+          </section>
+  
+          <section className="panel">
+            <div className="eyebrow">Revisão humana</div>
+            <h2 style={{ margin: '6px 0 14px' }}>Pontos de revisão</h2>
+            {sortedFlags.length ? (
+              <div className="stack">{sortedFlags.map((flag) => <FlagRow key={flag.id} flag={flag} />)}</div>
+            ) : (
+              <p className="sub">Nenhum ponto de revisão registrado para esta receita.</p>
+            )}
+          </section>
+        </div>
+        </div>
+      </details>
 
       <section className="panel" style={{ marginTop: 18 }}>
         <div className="eyebrow">Dados gerais</div>
