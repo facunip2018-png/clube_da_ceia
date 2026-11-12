@@ -157,11 +157,11 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       return NextResponse.json({ error: 'Envie o PDF antes de iniciar a leitura.' }, { status: 409 });
     }
 
-    const token = process.env.VERCEL_OIDC_TOKEN || process.env.AI_GATEWAY_API_KEY;
+    const token = process.env.OPENROUTER_API_KEY;
     if (!token) {
       return NextResponse.json({
-        error: 'A leitura automática está pronta, mas a conexão com a IA ainda não está habilitada neste projeto. É necessário habilitar o AI Gateway da Vercel.',
-        code: 'AI_GATEWAY_NOT_CONFIGURED',
+        error: 'A leitura automática está pronta, mas falta cadastrar OPENROUTER_API_KEY nas variáveis de ambiente da Vercel.',
+        code: 'OPENROUTER_NOT_CONFIGURED',
       }, { status: 503 });
     }
 
@@ -185,12 +185,13 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       'Páginas e números devem refletir a numeração física do PDF quando possível. Se não tiver certeza da página, use null.',
     ].join('\n');
 
-    const aiResponse = await fetch('https://ai-gateway.vercel.sh/v1/responses', {
+    const aiResponse = await fetch('https://openrouter.ai/api/v1/responses', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'google/gemini-3.8-flash',
+        model: 'openrouter/free',
         max_output_tokens: 48000,
+        plugins: [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }],
         text: { format: { type: 'json_object' } },
         input: [{
           role: 'user',
@@ -206,12 +207,12 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     const aiPayload = await aiResponse.json() as JsonRecord;
     if (!aiResponse.ok) {
       const status = aiResponse.status;
-      const message = status === 401 ? 'A autenticação do AI Gateway da Vercel não está válida.'
-        : status === 402 ? 'O AI Gateway está sem créditos ou atingiu o limite de gastos.'
-        : status === 403 ? 'A Vercel precisa habilitar o acesso ao AI Gateway para este projeto.'
-        : status === 429 ? 'O AI Gateway está temporariamente limitando as solicitações. Tente novamente em alguns minutos.'
+      const message = status === 401 ? 'A chave do OpenRouter não foi aceita. Confira OPENROUTER_API_KEY na Vercel.'
+        : status === 402 ? 'O OpenRouter recusou a solicitação por limite ou saldo. Confirme se o modelo selecionado é gratuito e se sua conta não está com saldo negativo.'
+        : status === 403 ? 'O OpenRouter não autorizou esta solicitação.'
+        : status === 429 ? 'O limite gratuito do OpenRouter foi atingido. Aguarde a renovação da cota e tente novamente.'
         : 'O serviço de leitura do PDF não respondeu corretamente.';
-      return NextResponse.json({ error: message, code: 'AI_GATEWAY_ERROR' }, { status: 502 });
+      return NextResponse.json({ error: message, code: 'OPENROUTER_ERROR' }, { status: 502 });
     }
 
     const outputText = getOutputText(aiPayload);
