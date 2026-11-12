@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState } from 'react';
 import {
-  BookMarked, CalendarHeart, ChefHat, Clock, Heart, Hourglass, Lightbulb, Play, RotateCcw, Scale, SearchX, Settings, ShoppingBasket,
+  BookMarked, CalendarHeart, ChefHat, Clock, Download, Heart, Hourglass, Lightbulb, Play, RotateCcw, Scale, SearchX, Settings, ShoppingBasket,
   Sparkles, Timer, TriangleAlert, Utensils,
 } from 'lucide-react';
 import { useFavoriteIds, useIngredientCatalog, useRecipeDetail, useTable } from '@/data/hooks';
@@ -52,7 +52,7 @@ function StepTimer({ timer, detail }: { timer: RecipeStepTimer; detail: RecipeDe
 
 export default function RecipePage() {
   const { slug } = useParams<{ slug: string }>();
-  const { user, access, store, ready } = useSession();
+  const { user, access, store, ready, supabase } = useSession();
   const { toast, fail } = useToast();
   const { rows, loading } = useTable('recipes', { eq: { slug } });
   const recipe = rows?.[0] ?? null;
@@ -62,6 +62,7 @@ export default function RecipePage() {
   const [factor, setFactor] = useState(1);
   const [planning, setPlanning] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   usePageTitle(recipe?.title ?? 'Receita');
 
   if (loading || !ready) return <Loading />;
@@ -103,6 +104,23 @@ export default function RecipePage() {
     }
   }
 
+  async function onDownloadOriginalPdf() {
+    const source = detail?.source;
+    if (!supabase || !access.has_access || !source?.storage_path) return;
+    setDownloadingPdf(true);
+    try {
+      const { data, error } = await supabase.storage
+        .from('source-documents')
+        .createSignedUrl(source.storage_path, 60, { download: source.file_name ?? true });
+      if (error) throw error;
+      window.location.assign(data.signedUrl);
+    } catch (error) {
+      fail(error);
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
+
   return (
     <>
       <div className="spread" style={{ marginBottom: 16 }}>
@@ -136,6 +154,11 @@ export default function RecipePage() {
 
           {canUse ? (
             <div className="actions">
+              {detail.source?.storage_path && (
+                <button type="button" className="btn outline" onClick={onDownloadOriginalPdf} disabled={downloadingPdf}>
+                  <Download /> {downloadingPdf ? 'Preparando PDF…' : 'Baixar PDF original'}
+                </button>
+              )}
               <Link href={`/cozinhar/${recipe.slug}${adjusted ? `?f=${factor}` : ''}`} className="btn primary wide"><Play /> Iniciar modo cozinheiro</Link>
               <button type="button" className="btn dark" onClick={() => setPlanning(true)}><CalendarHeart /> Adicionar à minha ceia</button>
               <button type="button" className="btn dark" onClick={onAddToList} disabled={busy}><ShoppingBasket /> Ingredientes na lista</button>
