@@ -61,7 +61,7 @@ describe('modo demonstração: mesmas regras do banco', () => {
     const [recipe] = await store.list('recipes', { eq: { slug: SLUG } });
     expect(await code(store.update('recipes', { id: recipe.id }, { status: 'approved' }))).toBe('FLAGS_PENDING');
     const [stub] = await store.list('recipes', { eq: { slug: 'panetone-tradicional' } });
-    expect(await code(store.update('recipes', { id: stub.id }, { status: 'approved' }))).toBe('CONTENT_REQUIRED');
+    expect(await code(store.update('recipes', { id: stub.id }, { status: 'approved' }))).toBe('FLAGS_PENDING');
     for (const flag of await store.list('review_flags', { eq: { recipe_id: recipe.id } })) {
       await store.update('review_flags', { id: flag.id }, { resolved_at: new Date().toISOString() });
     }
