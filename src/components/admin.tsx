@@ -26,7 +26,7 @@ export function useAdminAction() {
 }
 
 export const FILE_STATUS_LABELS: Record<string, string> = {
-  not_provided: 'Não enviado', awaiting_upload: 'Aguardando envio ao cofre', received: 'Recebido (fora do cofre)', stored: 'Guardado no cofre',
+  not_provided: 'PDF não enviado', awaiting_upload: 'Aguardando envio', received: 'PDF recebido', stored: 'PDF enviado',
 };
 export const PERMISSION_LABELS: Record<string, string> = {
   unknown: 'A confirmar', confirmed: 'Confirmada', restricted: 'Uso restrito', denied: 'Negada',
