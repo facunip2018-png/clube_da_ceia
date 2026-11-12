@@ -83,6 +83,59 @@ function StepRow({ step, index }: { step: RecipeStep; index: number }) {
   );
 }
 
+function QuickFill({ recipeId, componentId, ingredientCount, stepCount }: { recipeId: string; componentId: string; ingredientCount: number; stepCount: number }) {
+  const { store } = useSession();
+  const act = useAdminAction();
+  const [ingredientLines, setIngredientLines] = useState('');
+  const [stepLines, setStepLines] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    const lines = ingredientLines.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const stepsToAdd = stepLines.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const parsed = lines.map((line) => {
+      const [amountRaw = '', unitRaw = '', ...nameParts] = line.split('|').map((part) => part.trim());
+      const name = nameParts.join(' | ').trim();
+      const amount = numberOrNull(amountRaw);
+      if (!amountRaw || !name || (amount != null && (!Number.isFinite(amount) || amount <= 0))) return null;
+      return { amount, amountText: amount == null ? amountRaw : null, unit: amount == null ? null : unitRaw || null, name, original: line };
+    });
+    if (parsed.some((item) => item == null)) {
+      await act(async () => { throw new Error('Formato inválido. Use quantidade | unidade | ingrediente. Ex.: 500 | g | farinha. Para “a gosto”: a gosto | | sal.'); }, { tables: [] });
+      return;
+    }
+    if (!lines.length && !stepsToAdd.length) return;
+    setSaving(true);
+    const ok = await act(async () => {
+      if (parsed.length) await store.insert('recipe_ingredients', parsed.map((item, index) => ({
+        recipe_id: recipeId, component_id: componentId, ingredient_id: null, position: ingredientCount + index + 1,
+        quantity: item!.amount, quantity_max: null, unit: item!.unit, quantity_text: item!.amountText,
+        display_name: item!.name, preparation: null, household_note: null, scaling: 'linear',
+        is_optional: false, original_text: item!.original, source_page: null, needs_review: false,
+      })));
+      if (stepsToAdd.length) await store.insert('recipe_steps', stepsToAdd.map((instruction, index) => ({
+        recipe_id: recipeId, component_id: componentId, position: stepCount + index + 1,
+        instruction, original_text: null, tip: null, source_page: null, needs_review: false,
+      })));
+    }, { tables: [...TABLES], success: 'Ingredientes e etapas adicionados' });
+    setSaving(false);
+    if (ok) { setIngredientLines(''); setStepLines(''); }
+  }
+
+  return (
+    <form className="panel" onSubmit={save} style={{ marginBottom: 14, background: 'var(--cream, #faf9f5)' }}>
+      <div className="eyebrow">Preenchimento rápido</div>
+      <p className="muted small" style={{ margin: '5px 0 12px' }}>Cole vários itens de uma vez, um por linha. Ingredientes: quantidade | unidade | nome. Ex.: 500 | g | farinha. Para medida textual: a gosto | | sal.</p>
+      <div className="twocol">
+        <div className="group"><label>Ingredientes</label><textarea className="textarea" rows={5} value={ingredientLines} onChange={(e) => setIngredientLines(e.target.value)} placeholder={'500 | g | farinha de trigo\n2 | un | ovos\na gosto | | sal'} /></div>
+        <div className="group"><label>Modo de preparo (uma etapa por linha)</label><textarea className="textarea" rows={5} value={stepLines} onChange={(e) => setStepLines(e.target.value)} placeholder={'Misture os ingredientes secos.\nAdicione os líquidos e misture.'} /></div>
+      </div>
+      <button className="btn dark" type="submit" disabled={saving || (!ingredientLines.trim() && !stepLines.trim())}><Plus /> {saving ? 'Salvando…' : 'Adicionar tudo de uma vez'}</button>
+    </form>
+  );
+}
+
 function FlagRow({ flag }: { flag: ReviewFlag }) {
   const { store, user } = useSession();
   const act = useAdminAction();
@@ -290,6 +343,7 @@ export default function AdminRecipeEditor() {
           <section className="panel" style={{ marginTop: 18 }} key={part.component.id}>
             <div className="eyebrow">{ROLE_LABELS[part.component.role] ?? 'Parte'} · {pageRange(part.component.source_page_start, part.component.source_page_end) ?? ''}</div>
             <h2 style={{ margin: '6px 0 14px' }}>{part.component.title}</h2>
+            <QuickFill recipeId={recipe.id} componentId={part.component.id} ingredientCount={part.ingredients.length} stepCount={part.steps.length} />
             <div className="twocol">
               <div>
                 <div className="label" style={{ marginBottom: 6 }}>Ingredientes ({part.ingredients.length})</div>
