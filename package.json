@@ -18,7 +18,8 @@
     "test:hosted": "node tests/hosted/smoke.mjs",
     "content:build": "node scripts/content-build.mjs",
     "content:check": "node scripts/content-build.mjs --check",
-    "icons": "node scripts/make-icons.mjs"
+    "icons": "node scripts/make-icons.mjs",
+    "prebuild": "npm run content:build"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
