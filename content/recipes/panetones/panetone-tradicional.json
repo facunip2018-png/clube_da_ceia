@@ -1,0 +1,350 @@
+{
+  "slug": "panetone-tradicional",
+  "title": "Panetone Tradicional",
+  "original_title": "PANETONE TRADICIONAL",
+  "collection": "panetones-chocotones",
+  "document": "panetones-chocotones-natal",
+  "kind": "recipe",
+  "status": "review",
+  "language": "pt-BR",
+  "position": 1,
+  "description": "Panetone tradicional com uvas-passas e frutas cristalizadas.",
+  "yield": {
+    "quantity": 5,
+    "unit": "panetone",
+    "unit_plural": "panetones",
+    "detail": "500g cada",
+    "text": "5 Panetones de 500g",
+    "page": 20
+  },
+  "times": {
+    "prep_minutes": null,
+    "cook_minutes": null,
+    "bake_minutes": 30,
+    "rest_minutes": null
+  },
+  "source_pages": {
+    "start": 18,
+    "end": 20
+  },
+  "page_ref_verified": false,
+  "components": [
+    {
+      "key": "esponja",
+      "role": "esponja",
+      "title": "Esponja",
+      "original_title": "Ingredientes da Esponja",
+      "pages": [
+        18,
+        19
+      ],
+      "ingredients": [
+        {
+          "key": "farinha",
+          "ingredient": "farinha-de-trigo",
+          "name": "farinha de trigo",
+          "quantity": 200,
+          "unit": "g",
+          "original": "200g de farinha de trigo",
+          "page": 18
+        },
+        {
+          "key": "fermento",
+          "ingredient": "fermento-biologico-seco",
+          "name": "fermento biológico seco",
+          "quantity": 20,
+          "unit": "g",
+          "original": "20g de fermento biológico seco",
+          "page": 18
+        },
+        {
+          "key": "agua",
+          "ingredient": "agua-morna",
+          "name": "água morna",
+          "quantity": 200,
+          "unit": "ml",
+          "original": "200ml de água morna",
+          "page": 18
+        }
+      ],
+      "steps": [
+        {
+          "text": "Misture muito bem a farinha de trigo, o fermento biológico seco e a água morna até formar uma massa grossa e pegajosa. Adicione mais água morna caso seja necessário para ficar bem pegajosa.",
+          "original": "Misture muito bem os 3 ingredientes, (farinha, fermento e a água morna), até formar uma massa grossa e pegajosa. Adicione mais água morna caso seja necessário para ficar bem pegajosa.",
+          "page": 19,
+          "uses": [
+            "farinha",
+            "fermento",
+            "agua"
+          ]
+        },
+        {
+          "text": "Cubra bem e deixe descansar por 30 a 40 minutos em local abafado e seco.",
+          "original": "Cubra bem e deixe descansando por 30 a 40 minutos em local abafado e seco.",
+          "page": 19,
+          "timers": [
+            {
+              "label": "Descanso da esponja",
+              "seconds": 1800,
+              "kind": "rest",
+              "original": "30 a 40 minutos",
+              "flag": {
+                "severity": "info",
+                "message": "O texto informa intervalo de 30 a 40 minutos; o temporizador usa 30 minutos como referência inicial."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "massa",
+      "role": "massa",
+      "title": "Massa do Panetone",
+      "original_title": "Ingredientes para a Massa",
+      "pages": [
+        18,
+        20
+      ],
+      "ingredients": [
+        {
+          "key": "farinha",
+          "ingredient": "farinha-de-trigo",
+          "name": "farinha de trigo",
+          "quantity": 800,
+          "unit": "g",
+          "original": "800g de farinha de trigo",
+          "page": 18
+        },
+        {
+          "key": "acucar",
+          "ingredient": "acucar-refinado",
+          "name": "açúcar refinado",
+          "quantity": 150,
+          "unit": "g",
+          "original": "150g de açúcar refinado",
+          "page": 18
+        },
+        {
+          "key": "leite-po",
+          "ingredient": "leite-em-po",
+          "name": "leite em pó",
+          "quantity": 5,
+          "unit": "colher de sopa",
+          "original": "5 colheres (sopa) de Leite em pó",
+          "page": 18
+        },
+        {
+          "key": "sal",
+          "ingredient": "sal",
+          "name": "sal",
+          "quantity": null,
+          "unit": null,
+          "quantity_text": "1 pitadinha",
+          "scaling": "manual",
+          "original": "1 pitadinha de sal",
+          "page": 18
+        },
+        {
+          "key": "gemas",
+          "ingredient": "gema-de-ovo",
+          "name": "gemas",
+          "quantity": 10,
+          "unit": "unidade",
+          "original": "10 gemas",
+          "page": 18
+        },
+        {
+          "key": "agua",
+          "ingredient": "agua-morna",
+          "name": "água morna",
+          "quantity": 200,
+          "unit": "ml",
+          "original": "200ml de água morna",
+          "page": 18
+        },
+        {
+          "key": "baunilha",
+          "ingredient": "essencia-de-baunilha",
+          "name": "essência de baunilha",
+          "quantity": 3,
+          "unit": "colher de sopa",
+          "original": "3 colheres (sopa) de essência de baunilha",
+          "page": 18
+        },
+        {
+          "key": "essencia-panetone",
+          "ingredient": "essencia-de-panetone",
+          "name": "essência de Panetone",
+          "quantity": 15,
+          "unit": "ml",
+          "original": "15ml de essência de Panetone",
+          "page": 18
+        },
+        {
+          "key": "raspas-limao",
+          "ingredient": "limao",
+          "name": "raspas de limão",
+          "quantity": 2,
+          "unit": "unidade",
+          "original": "Raspas de 2 limões",
+          "page": 18,
+          "preparation": "raspas"
+        },
+        {
+          "key": "raspas-laranja",
+          "ingredient": "laranja",
+          "name": "raspas de laranja",
+          "quantity": 2,
+          "unit": "unidade",
+          "original": "2 laranjas",
+          "page": 18,
+          "preparation": "raspas"
+        },
+        {
+          "key": "gordura",
+          "ingredient": "margarina-sem-sal",
+          "name": "margarina ou manteiga sem sal",
+          "quantity": 160,
+          "unit": "g",
+          "original": "160g de margarina ou manteiga (sem sal)",
+          "page": 18,
+          "flag": {
+            "severity": "warning",
+            "message": "O texto permite margarina ou manteiga; a ficha preserva as duas opções, sem definir uma delas."
+          }
+        },
+        {
+          "key": "passas",
+          "ingredient": "uva-passa",
+          "name": "uvas-passas",
+          "quantity": 200,
+          "unit": "g",
+          "original": "200g de uvas passas",
+          "page": 18
+        },
+        {
+          "key": "frutas",
+          "ingredient": "frutas-cristalizadas",
+          "name": "frutas cristalizadas",
+          "quantity": 250,
+          "unit": "g",
+          "original": "250g de frutas cristalizadas",
+          "page": 18
+        }
+      ],
+      "steps": [
+        {
+          "text": "Em uma vasilha, coloque a água morna e acrescente as essências de baunilha e de Panetone. Em outra tigela, adicione a farinha, o açúcar, o sal, o leite em pó, as gemas e a esponja preparada e descansada, até formar uma espécie de farofa.",
+          "original": "Numa vasilha, coloque a água morna e acrescente as essências de baunilha e de Panetone. Em uma outra tigela, adicione a farinha, o açúcar, o sal, o leite em pó, as gemas e a esponja preparada antes e já descansada, até formar uma certa “farofa”.",
+          "page": 19,
+          "uses": [
+            "agua",
+            "baunilha",
+            "essencia-panetone",
+            "farinha",
+            "acucar",
+            "sal",
+            "leite-po",
+            "gemas"
+          ],
+          "uses_components": [
+            "esponja"
+          ]
+        },
+        {
+          "text": "Despeje a farofa na mistura líquida de água com as essências e sove por cerca de 10 minutos. Acrescente a margarina ou manteiga e sove até chegar ao ponto de véu: a massa deve abrir até ficar transparente, sem rasgar.",
+          "original": "Em seguida despeje a ‘’farofa’’ na mistura líquida de água com as essências e sove por uns 10 minutos. Acrescente a margarina e sove até chegar no ponto de véu, (pegue uma pequena porção da massa com as mãos untadas com óleo e estique com cuidado, a massa deve abrir até ficar transparente, não pode rasgar).",
+          "page": 19,
+          "uses": [
+            "gordura"
+          ],
+          "timers": [
+            {
+              "label": "Sovar a massa",
+              "seconds": 600,
+              "kind": "cook",
+              "original": "sove por uns 10 minutos"
+            }
+          ]
+        },
+        {
+          "text": "Adicione as raspas de limão e laranja e mexa bem até incorporar totalmente. A massa é macia e pegajosa; use óleo nas mãos para manuseá-la.",
+          "original": "Depois adicione as raspas de limão e laranja e mexa bem até incorporar totalmente. A massa é macia e pegajosa, e suas mãos precisam do óleo para mexer.",
+          "page": 19,
+          "uses": [
+            "raspas-limao",
+            "raspas-laranja"
+          ]
+        },
+        {
+          "text": "Coloque a massa em uma superfície untada com óleo, abra com as mãos e espalhe as frutas cristalizadas e as uvas-passas. Enrole, modele formando uma bola e coloque em uma tigela grande untada com óleo.",
+          "original": "Agora coloque essa massa em uma superfície untada com óleo e abra com as mãos espalhando as frutas cristalizadas e as uvas passas. Enrole bem e modele formando uma bola e coloque em uma tigela bem grande untada com óleo.",
+          "page": 19,
+          "uses": [
+            "passas",
+            "frutas"
+          ]
+        },
+        {
+          "text": "Deixe descansar entre 1h30 e 2h. Depois, volte para a superfície untada e divida a massa em duas partes do mesmo tamanho. Coloque nas formas de papel até a metade da altura.",
+          "original": "Deixe descansar entre 1h30m à 2h. Depois disso, volte para a superfície untada e dívida em duas partes do mesmo tamanho. A massa deve estar até na metade da forma de papel.",
+          "page": 20,
+          "timers": [
+            {
+              "label": "Descanso da massa",
+              "seconds": 5400,
+              "kind": "rest",
+              "original": "entre 1h30m à 2h",
+              "flag": {
+                "severity": "info",
+                "message": "O texto informa intervalo de 1h30 a 2h; o temporizador usa 1h30 como referência inicial."
+              }
+            }
+          ],
+          "flag": {
+            "severity": "warning",
+            "message": "O texto orienta dividir a massa em duas partes, mas informa rendimento de 5 unidades de 500g. Confirmar a quantidade de formas e a divisão correta."
+          }
+        },
+        {
+          "text": "Aguarde a massa crescer até a borda da forma e asse em forno preaquecido a 180 °C por aproximadamente 30 minutos.",
+          "original": "Aguarde a massa crescer até a borda e leve para assar no forno pré-aquecido em 180 graus por aproximadamente 30 minutos.",
+          "page": 20,
+          "timers": [
+            {
+              "label": "Assar",
+              "seconds": 1800,
+              "kind": "bake",
+              "original": "por aproximadamente 30 minutos",
+              "flag": {
+                "severity": "info",
+                "message": "O tempo é aproximado no texto original."
+              }
+            }
+          ]
+        },
+        {
+          "text": "Asse em forma de Panetone de 500g (13cm x 9,5cm).",
+          "original": "Asse em forma de Panetone de 500g (13cm x 9,5cm)",
+          "page": 20
+        }
+      ]
+    }
+  ],
+  "tips": [
+    {
+      "text": "Coloque uma forma retangular com água na grade de baixo para deixar o forno úmido e ajudar a massa a ficar fofinha e não endurecer facilmente depois.",
+      "original": "Coloque uma forma retangular com água na grade de baixo para deixar o forno úmido para que a massa fique fofinha e não endureça facilmente depois.",
+      "page": 20
+    }
+  ],
+  "flags": [
+    {
+      "field": "yield",
+      "severity": "warning",
+      "page": 20,
+      "message": "Rendimento informado como 5 panetones de 500g, mas o modo de preparo diz para dividir a massa em duas partes. Confirmar no PDF original."
+    }
+  ]
+}
