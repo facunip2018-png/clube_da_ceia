@@ -17,9 +17,14 @@ function cleanNumber(value: unknown): number | null {
   return null;
 }
 
-function cleanPage(value: unknown): number | null {
+function cleanInteger(value: unknown): number | null {
   const n = cleanNumber(value);
-  return n !== null && Number.isInteger(n) && n > 0 ? n : null;
+  return n !== null && Number.isInteger(n) ? n : null;
+}
+
+function cleanPage(value: unknown): number | null {
+  const n = cleanInteger(value);
+  return n !== null && n > 0 ? n : null;
 }
 
 function cleanText(value: unknown): string | null {
@@ -63,11 +68,11 @@ function normalizePayload(input: JsonRecord): JsonRecord {
       description: cleanText(recipe.description),
       difficulty: cleanText(recipe.difficulty)?.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') ?? null,
       yield_text: cleanText(recipe.yield_text),
-      prep_minutes: cleanNumber(recipe.prep_minutes),
-      cook_minutes: cleanNumber(recipe.cook_minutes),
-      bake_minutes: cleanNumber(recipe.bake_minutes),
-      chill_minutes: cleanNumber(recipe.chill_minutes),
-      rest_minutes: cleanNumber(recipe.rest_minutes),
+      prep_minutes: cleanInteger(recipe.prep_minutes),
+      cook_minutes: cleanInteger(recipe.cook_minutes),
+      bake_minutes: cleanInteger(recipe.bake_minutes),
+      chill_minutes: cleanInteger(recipe.chill_minutes),
+      rest_minutes: cleanInteger(recipe.rest_minutes),
       source_page_start: cleanPage(recipe.source_page_start),
       source_page_end: cleanPage(recipe.source_page_end),
       ingredients: rawIngredients.slice(0, 150).map((rawIngredient) => {
@@ -185,7 +190,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'google/gemini-3.8-flash',
-        max_output_tokens: 24000,
+        max_output_tokens: 48000,
         text: { format: { type: 'json_object' } },
         input: [{
           role: 'user',
@@ -213,7 +218,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     if (!outputText) return NextResponse.json({ error: 'A IA não retornou conteúdo legível para este PDF.' }, { status: 502 });
     const parsed = parseModelJson(outputText);
     const payload = normalizePayload(parsed);
-    if (!Array.isArray(payload.recipes) || payload.recipes.length === 0) {
+    if ((!Array.isArray(payload.recipes) || payload.recipes.length === 0) && (!Array.isArray(payload.support_materials) || payload.support_materials.length === 0)) {
       return NextResponse.json({ error: 'Não encontrei receitas completas com ingredientes e modo de preparo neste PDF. Nenhuma receita foi cadastrada.' }, { status: 422 });
     }
 
