@@ -1,0 +1,125 @@
+{
+  "slug": "panetone-chocotone-no-pote",
+  "title": "Panetone/Chocotone no Pote",
+  "original_title": "PANETONE/CHOCOTONE NO POTE",
+  "collection": "panetones-chocotones",
+  "document": "panetones-chocotones-natal",
+  "kind": "recipe",
+  "status": "review",
+  "language": "pt-BR",
+  "position": 45,
+  "description": "Sobremesa no pote com miolo de Panetone ou Chocotone, calda e recheio à escolha.",
+  "yield": {
+    "quantity": 3,
+    "unit": "Potes",
+    "unit_plural": "Potes",
+    "detail": "potes de 250ml; rendimento médio informado para cada receita de recheio",
+    "text": "Em média, cada receita de recheio rende 3 Panetones no pote",
+    "page": 114
+  },
+  "source_pages": {
+    "start": 113,
+    "end": 115
+  },
+  "page_ref_verified": false,
+  "tags": [
+    "natal",
+    "panetone",
+    "chocotone",
+    "sobremesa-no-pote"
+  ],
+  "components": [
+    {
+      "key": "calda",
+      "role": "calda",
+      "title": "Calda de Panetone",
+      "pages": [
+        114
+      ],
+      "ingredients": [
+        {
+          "key": "agua",
+          "ingredient": "agua",
+          "name": "água",
+          "quantity": 500,
+          "unit": "ml",
+          "scaling": "linear",
+          "original": "500ml de água",
+          "page": 114
+        },
+        {
+          "key": "acucar",
+          "ingredient": "acucar-refinado",
+          "name": "açúcar",
+          "quantity": 2,
+          "unit": "colheres (café)",
+          "scaling": "linear",
+          "original": "2 colheres (café) de açúcar",
+          "page": 114
+        },
+        {
+          "key": "essencia-de-panetone",
+          "ingredient": "essencia-de-panetone",
+          "name": "essência de Panetone",
+          "quantity": 10,
+          "unit": "gotas",
+          "scaling": "linear",
+          "original": "10 gotas de essência de Panetone",
+          "page": 114
+        }
+      ],
+      "steps": [
+        {
+          "text": "Misture todos os ingredientes e deixe ferver por 5 minutos. Deixe esfriar.",
+          "original": "Basta misturar todos os ingredientes e deixar ferver por 5 minutos. Depois é só deixar esfriar.",
+          "page": 114
+        }
+      ]
+    },
+    {
+      "key": "montagem",
+      "role": "montagem",
+      "title": "Montagem do Panetone/Chocotone no Pote",
+      "pages": [
+        114,
+        115
+      ],
+      "ingredients": [],
+      "steps": [
+        {
+          "text": "Use potes de 250ml.",
+          "original": "Recomendo usar Potes de 250ml.",
+          "page": 115
+        },
+        {
+          "text": "Esfarele o miolo retirado do Panetone ou Chocotone; também é possível preparar uma receita e esfarelar.",
+          "original": "Comece esfarelando o miolo retirado do Panetone ou Chocotone.",
+          "page": 115
+        },
+        {
+          "text": "Preencha o fundo com uma camada de miolo e umedeça com a calda.",
+          "original": "Preencha o fundo do pote com uma camada de Panetone ou Chocotone e umedeça com a calda.",
+          "page": 115
+        },
+        {
+          "text": "Adicione uma camada do recheio de sua preferência e intercale miolo, calda e recheio até completar o pote.",
+          "original": "Em seguida coloque uma camada do recheio de sua preferência, e vá intercalando Panetone, calda e recheio até completar o pote.",
+          "page": 115
+        },
+        {
+          "text": "Finalize com frutas ou raspas de chocolate; pode colocar uma fita vermelha na parte exterior.",
+          "original": "Finalize com frutas na parte superior ou raspas de chocolate. Pode colocar também uma fita vermelha na parte exterior.",
+          "page": 115
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "field": "yield",
+      "severity": "warning",
+      "page": 114,
+      "message": "O rendimento informado é médio: cada receita de recheio rende cerca de 3 potes. Confirmar na revisão."
+    }
+  ]
+}
