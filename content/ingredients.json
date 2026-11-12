@@ -149,5 +149,45 @@
     "slug": "doce-de-leite",
     "name": "Doce de leite",
     "category": "laticinios"
+  },
+  {
+    "slug": "nutella",
+    "name": "Nutella",
+    "category": "confeitaria"
+  },
+  {
+    "slug": "cacau-em-po-50",
+    "name": "Cacau em pó 50%",
+    "category": "mercearia"
+  },
+  {
+    "slug": "chocolate-branco",
+    "name": "Chocolate branco",
+    "category": "confeitaria"
+  },
+  {
+    "slug": "chocolate-branco-nobre",
+    "name": "Chocolate branco nobre",
+    "category": "confeitaria"
+  },
+  {
+    "slug": "chocolate-nobre-meio-amargo",
+    "name": "Chocolate nobre meio amargo",
+    "category": "confeitaria"
+  },
+  {
+    "slug": "ovomaltine",
+    "name": "Ovomaltine em pó",
+    "category": "mercearia"
+  },
+  {
+    "slug": "nozes",
+    "name": "Nozes",
+    "category": "mercearia"
+  },
+  {
+    "slug": "chocolate-meio-amargo-fracionado",
+    "name": "Chocolate meio amargo fracionado ou tipo cobertura",
+    "category": "confeitaria"
   }
 ]
