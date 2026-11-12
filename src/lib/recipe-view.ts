@@ -22,21 +22,44 @@ export function assembleRecipeDetail(
   extra: { collection?: Collection | null; source?: SourceDocumentRef | null } = {},
 ): RecipeDetail {
   const ownComponents = rows.components.filter((c) => c.recipe_id === recipe.id).sort(byPosition);
+  const directIngredients = rows.ingredients.filter((i) => i.recipe_id === recipe.id && i.component_id === null);
+  const directSteps = rows.steps.filter((s) => s.recipe_id === recipe.id && s.component_id === null);
+  const componentsToRender = [...ownComponents];
+  // Conteúdo antigo/importado pode estar ligado diretamente à receita (component_id NULL).
+  // Não o descartamos: ele precisa aparecer como uma parte própria da ficha.
+  if (directIngredients.length || directSteps.length) {
+    const timestamp = recipe.updated_at ?? recipe.created_at;
+    componentsToRender.push({
+      id: `direct-${recipe.id}`,
+      recipe_id: recipe.id,
+      linked_recipe_id: null,
+      role: 'outro',
+      title: 'Preparo principal',
+      original_title: null,
+      description: null,
+      multiplier: 1,
+      position: Math.max(-1, ...ownComponents.map((c) => c.position)) + 1,
+      source_page_start: recipe.source_page_start,
+      source_page_end: recipe.source_page_end,
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
+  }
   const ingredientById = new Map(rows.ingredients.map((i) => [i.id, i]));
   const componentById = new Map(rows.components.map((c) => [c.id, c]));
 
-  const parts: RecipePart[] = ownComponents.map((component) => {
+  const parts: RecipePart[] = componentsToRender.map((component) => {
     // Parte compartilhada: usa ingredientes e etapas do componente vinculado, na proporção indicada.
     const sourceRecipeId = component.linked_recipe_id ?? recipe.id;
     const linked = Boolean(component.linked_recipe_id);
     const ingredients = rows.ingredients
-      .filter((i) => (linked ? i.recipe_id === sourceRecipeId : i.component_id === component.id))
+      .filter((i) => (linked ? i.recipe_id === sourceRecipeId : i.recipe_id === recipe.id && i.component_id === component.id))
       .sort(byPosition)
       .map((i) => (linked && component.multiplier !== 1 && i.quantity != null && i.scaling !== 'fixed'
         ? { ...i, quantity: i.quantity * component.multiplier, quantity_max: i.quantity_max != null ? i.quantity_max * component.multiplier : null }
         : i));
     const steps = rows.steps
-      .filter((s) => (linked ? s.recipe_id === sourceRecipeId : s.component_id === component.id))
+      .filter((s) => (linked ? s.recipe_id === sourceRecipeId : s.recipe_id === recipe.id && s.component_id === component.id))
       .sort(byPosition)
       .map((step) => ({
         ...step,
