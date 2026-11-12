@@ -42,7 +42,7 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
   }
 
   async function importPdf() {
-    if (importing || uploading) return;
+    if (importing) return;
     setImporting(true);
     try {
       const response = await fetch(`/api/admin/documentos/${document.id}/importar`, { method: 'POST' });
