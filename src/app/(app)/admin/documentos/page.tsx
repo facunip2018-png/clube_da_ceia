@@ -28,6 +28,7 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
   const [notes, setNotes] = useState(document.permission_notes ?? '');
   const [uploading, setUploading] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [extracting, setExtracting] = useState(false);
   const published = recipes.filter((r) => r.status === 'published').length;
   const dirty = permission !== document.commercial_permission || notes !== (document.permission_notes ?? '');
 
@@ -57,6 +58,21 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
       fail(error);
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function extractText() {
+    if (extracting || importing) return;
+    setExtracting(true);
+    try {
+      const response = await fetch(`/api/admin/documentos/${document.id}/extrair-texto`, { method: 'POST' });
+      const result = await response.json() as { error?: string; pages?: number; characters?: number };
+      if (!response.ok) throw new Error(result.error || 'Não foi possível extrair o texto do PDF.');
+      toast(`Texto extraído: ${result.pages ?? 0} páginas e ${(result.characters ?? 0).toLocaleString('pt-BR')} caracteres. O conteúdo já pode ser consultado no banco de dados.`);
+    } catch (error) {
+      fail(error);
+    } finally {
+      setExtracting(false);
     }
   }
 
@@ -127,13 +143,18 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
         <button type="button" className="btn dark sm" disabled={!dirty} onClick={save}><Save /> Salvar permissão</button>
         {supabase ? (
           <>
-            <button type="button" className="btn outline sm" disabled={uploading || importing} onClick={() => input.current?.click()}>
+            <button type="button" className="btn outline sm" disabled={uploading || importing || extracting} onClick={() => input.current?.click()}>
               <FileUp /> {uploading ? 'Enviando…' : document.file_status === 'stored' ? 'Substituir PDF' : 'Enviar PDF'}
             </button>
             {document.file_status === 'stored' && (
-              <button type="button" className="btn dark sm" disabled={uploading || importing} onClick={importPdf}>
-                {importing ? 'Lendo e cadastrando…' : 'Ler PDF e cadastrar receitas'}
-              </button>
+              <>
+                <button type="button" className="btn outline sm" disabled={uploading || importing || extracting} onClick={extractText}>
+                  {extracting ? 'Extraindo texto…' : 'Extrair texto sem IA'}
+                </button>
+                <button type="button" className="btn dark sm" disabled={uploading || importing || extracting} onClick={importPdf}>
+                  {importing ? 'Lendo e cadastrando…' : 'Ler PDF e cadastrar receitas'}
+                </button>
+              </>
             )}
             <input ref={input} type="file" accept="application/pdf" hidden onChange={(e) => upload(e.target.files?.[0])} />
           </>
