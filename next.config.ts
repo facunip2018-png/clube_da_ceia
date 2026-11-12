@@ -17,12 +17,6 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // PDF.js precisa carregar seu worker real a partir de node_modules no runtime Node da Vercel.
-  serverExternalPackages: ['pdfjs-dist'],
-  // Garante que o worker dinâmico do PDF.js entre no pacote serverless da Vercel.
-  outputFileTracingIncludes: {
-    '/api/admin/documentos/[id]/extrair-texto': ['./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'],
-  },
   // Permite gerar um segundo build em outra pasta (usado nas verificações de segurança do modo produção).
   distDir: process.env.NEXT_DIST_DIR || '.next',
   poweredByHeader: false,

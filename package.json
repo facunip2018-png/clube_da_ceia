@@ -7,7 +7,7 @@
     "node": ">=20.9"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/copy-pdf-worker.mjs && next dev",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
@@ -19,7 +19,7 @@
     "content:build": "node scripts/content-build.mjs",
     "content:check": "node scripts/content-build.mjs --check",
     "icons": "node scripts/make-icons.mjs",
-    "prebuild": "npm run content:build"
+    "prebuild": "node scripts/content-build.mjs && node scripts/copy-pdf-worker.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
