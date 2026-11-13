@@ -102,7 +102,7 @@ function createTextParts(pages: ExtractedPage[]): TextPart[] {
   let lastPage = 0;
   const flush = () => {
     if (!blocks.length) return;
-    result.push({ text: blocks.join('\\n\\n'), firstPage, lastPage });
+    result.push({ text: blocks.join('\n\n'), firstPage, lastPage });
     blocks = [];
     chars = 0;
     firstPage = 0;
@@ -111,7 +111,7 @@ function createTextParts(pages: ExtractedPage[]): TextPart[] {
   for (const page of usable) {
     const text = page.page_text.trim();
     for (let offset = 0; offset < text.length; offset += MAX_TEXT_PART_CHARACTERS) {
-      const block = `PÁGINA ORIGINAL ${page.page_number}:\\n${text.slice(offset, offset + MAX_TEXT_PART_CHARACTERS)}`;
+      const block = `PÁGINA ORIGINAL ${page.page_number}:\n${text.slice(offset, offset + MAX_TEXT_PART_CHARACTERS)}`;
       if (chars + block.length > MAX_TEXT_PART_CHARACTERS && blocks.length) flush();
       if (!firstPage) firstPage = page.page_number;
       lastPage = page.page_number;
@@ -270,7 +270,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       'Extraia também utensílios, ingredientes básicos, dicas e orientações em support_materials, com kind, title, body e source_page.',
       'Identifique o nome e a descrição da categoria em collection.name e collection.description.',
       'Responda somente com JSON válido, sem markdown, no formato: {"collection":{"name":"...","description":null},"recipes":[{"title":"...","ingredients":[{"display_name":"...","quantity":null,"quantity_max":null,"unit":null,"quantity_text":"...","preparation":null,"is_optional":false,"original_text":"...","source_page":1}],"steps":[{"instruction":"...","original_text":"...","tip":null,"source_page":1}]}],"support_materials":[{"kind":"dicas","title":"...","body":"...","source_page":1}]}',
-    ].join('\\n');
+    ].join('\n');
 
     const allRecipes: JsonRecord[] = [];
     const allSupportMaterials: JsonRecord[] = [];
@@ -283,7 +283,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         `Trecho ${partIndex + 1} de ${textParts.length}. Páginas originais abrangidas: ${part.firstPage} a ${part.lastPage}.`,
         `Título do documento: ${document.title}.`,
         part.text,
-      ].join('\\n\\n');
+      ].join('\n\n');
 
       const aiResponse = await fetch('https://openrouter.ai/api/v1/responses', {
         method: 'POST',
