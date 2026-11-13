@@ -279,14 +279,14 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     const processTextPart = async (part: TextPart, partIndex: number): Promise<{ collection: JsonRecord; recipes: JsonRecord[]; supportMaterials: JsonRecord[] }> => {
       const prompt = [
         promptInstructions,
-        \`Trecho \${partIndex + 1} de \${textParts.length}. Páginas originais abrangidas: \${part.firstPage} a \${part.lastPage}.\`,
-        \`Título do documento: \${document.title}.\`,
+        `Trecho ${partIndex + 1} de ${textParts.length}. Páginas originais abrangidas: ${part.firstPage} a ${part.lastPage}.`,
+        `Título do documento: ${document.title}.`,
         part.text,
       ].join('\n\n');
 
       const aiResponse = await fetch('https://openrouter.ai/api/v1/responses', {
         method: 'POST',
-        headers: { Authorization: \`Bearer \${token}\`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'openrouter/free',
           max_output_tokens: 14000,
@@ -317,7 +317,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         const message = status === 401 ? 'A chave do OpenRouter não foi aceita. Confira o segredo cadastrado no cofre do Supabase.'
           : status === 402 ? 'O OpenRouter recusou a solicitação por limite ou saldo. Nenhuma receita foi cadastrada.'
           : status === 403 ? 'O OpenRouter não autorizou esta solicitação. Verifique as permissões da chave.'
-          : status === 429 ? \`O limite gratuito do OpenRouter foi atingido durante o trecho \${partIndex + 1} de \${textParts.length}. Nenhuma receita foi cadastrada; aguarde e tente novamente.\`
+          : status === 429 ? `O limite gratuito do OpenRouter foi atingido durante o trecho ${partIndex + 1} de ${textParts.length}. Nenhuma receita foi cadastrada; aguarde e tente novamente.`
           : status === 400 ? 'O OpenRouter rejeitou o texto extraído. O motivo técnico foi registrado; nenhuma receita foi cadastrada.'
           : 'O serviço gratuito de leitura não respondeu corretamente. Nenhuma receita foi cadastrada.';
         throw new Error(message);
@@ -325,14 +325,14 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
 
       const outputText = getOutputText(aiPayload);
       if (!outputText) {
-        throw new Error(\`A IA não retornou conteúdo legível no trecho \${partIndex + 1} de \${textParts.length}. Nenhuma receita foi cadastrada.\`);
+        throw new Error(`A IA não retornou conteúdo legível no trecho ${partIndex + 1} de ${textParts.length}. Nenhuma receita foi cadastrada.`);
       }
       let parsed: JsonRecord;
       try {
         parsed = parseModelJson(outputText);
       } catch {
         console.error('OpenRouter retornou conteúdo fora do JSON esperado:', { part: partIndex + 1, totalParts: textParts.length });
-        throw new Error(\`O leitor respondeu em formato inesperado no trecho \${partIndex + 1} de \${textParts.length}. Nenhuma receita foi cadastrada; tente novamente.\`);
+        throw new Error(`O leitor respondeu em formato inesperado no trecho ${partIndex + 1} de ${textParts.length}. Nenhuma receita foi cadastrada; tente novamente.`);
       }
       const normalized = normalizePayload(parsed);
       return {
