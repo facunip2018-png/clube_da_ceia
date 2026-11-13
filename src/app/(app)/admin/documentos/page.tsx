@@ -194,7 +194,32 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
 
   async function readAndImportPdf(storagePath?: string) {
     if (extracting || importing) return;
-    const extracted = await extractText(storagePath);
+
+    // Ao reler um documento já processado, aproveita o texto persistido no
+    // Supabase. Evita baixar/renderizar o PDF outra vez antes de importar.
+    // Quando um novo arquivo é enviado (storagePath informado), a extração
+    // sempre é refeita para não reutilizar texto de uma versão anterior.
+    let extracted = false;
+    if (!storagePath && supabase && document.file_status === 'stored') {
+      try {
+        const { data: savedPages, error: savedPagesError } = await supabase
+          .from('document_extracted_pages')
+          .select('page_text')
+          .eq('source_document_id', document.id);
+        if (savedPagesError) throw savedPagesError;
+        const savedCharacters = (savedPages ?? []).reduce(
+          (total, page) => total + (page.page_text?.trim().length ?? 0),
+          0,
+        );
+        extracted = savedCharacters >= 80;
+      } catch (error) {
+        console.warn('Não foi possível reutilizar o texto salvo; uma nova extração será tentada.', error);
+      }
+    }
+
+    if (!extracted) {
+      extracted = await extractText(storagePath);
+    }
     if (!extracted) return;
     await importPdf();
   }
