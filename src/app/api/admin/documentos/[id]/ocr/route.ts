@@ -212,7 +212,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return NextResponse.json({ error: 'Não foi possível preservar o texto já extraído antes de salvar o OCR.' }, { status: 500 });
     }
 
-    const existingByPage = new Map((existingRows ?? []).map((row) => [row.page_number, row.page_text ?? '']));
+    const existingByPage = new Map((existingRows ?? []).map((row) => [row.page_number, row.page_text ?? ''] as const));
     const rows = pageNumbers.map((pageNumber) => {
       const existingText = existingByPage.get(pageNumber) ?? '';
       const baseText = existingText.split(OCR_MARKER)[0].trim();
