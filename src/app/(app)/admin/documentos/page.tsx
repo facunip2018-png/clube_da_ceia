@@ -93,6 +93,7 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
       }).promise;
 
       const pages: { source_document_id: string; page_number: number; page_text: string }[] = [];
+      const imagePages: { page_number: number; image_data_url: string }[] = [];
       let characters = 0;
       try {
         for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
@@ -108,6 +109,31 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
             throw new Error('O texto extraído ultrapassou o limite seguro de 8 milhões de caracteres.');
           }
           pages.push({ source_document_id: document.id, page_number: pageNumber, page_text: text });
+
+          // Páginas com pouco texto selecionável podem conter a receita como imagem.
+          // Renderizamos no navegador; a imagem é enviada apenas para OCR e não é armazenada.
+          if (text.length < 100 && imagePages.length < 40) {
+            try {
+              const baseViewport = page.getViewport({ scale: 1 });
+              const scale = Math.min(1.5, 1600 / baseViewport.width);
+              const viewport = page.getViewport({ scale });
+              const canvas = window.document.createElement('canvas');
+              canvas.width = Math.ceil(viewport.width);
+              canvas.height = Math.ceil(viewport.height);
+              const context = canvas.getContext('2d');
+              if (context) {
+                await page.render({ canvasContext: context, viewport }).promise;
+                const imageDataUrl = canvas.toDataURL('image/jpeg', 0.76);
+                if (imageDataUrl.length <= 1_700_000) {
+                  imagePages.push({ page_number: pageNumber, image_data_url: imageDataUrl });
+                }
+              }
+              canvas.width = 0;
+              canvas.height = 0;
+            } catch (renderError) {
+              console.warn('Não foi possível preparar a página para OCR:', pageNumber, renderError);
+            }
+          }
           page.cleanup();
         }
       } finally {
@@ -115,8 +141,8 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
       }
 
       const pagesWithText = pages.filter((page) => page.page_text.length > 0).length;
-      if (characters < 80 || pagesWithText === 0) {
-        throw new Error('Este PDF parece ser formado por páginas escaneadas ou imagens, sem texto selecionável. A extração sem OCR não gravou nenhum resultado.');
+      if (characters < 80 && imagePages.length === 0) {
+        throw new Error('Não foi possível extrair texto nem preparar páginas para OCR. Confira se o PDF está íntegro.');
       }
 
       for (let start = 0; start < pages.length; start += 100) {
@@ -133,7 +159,30 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
         .gt('page_number', pages.length);
       if (cleanupError) throw cleanupError;
 
-      toast(`Texto extraído: ${pages.length} páginas, ${pagesWithText} com texto e ${characters.toLocaleString('pt-BR')} caracteres. O conteúdo foi gravado no Supabase.`);
+      let ocrPagesRead = 0;
+      let ocrPagesFailed = 0;
+      for (let start = 0; start < imagePages.length; start += 2) {
+        const batch = imagePages.slice(start, start + 2);
+        try {
+          const response = await fetch(`/api/admin/documentos/${document.id}/ocr`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pages: batch }),
+          });
+          const result = await response.json() as { error?: string; recognized_pages?: number };
+          if (!response.ok) throw new Error(result.error || 'O OCR não conseguiu ler esta página.');
+          ocrPagesRead += result.recognized_pages ?? 0;
+        } catch (ocrError) {
+          ocrPagesFailed += batch.length;
+          console.warn('Falha no OCR das páginas:', batch.map((page) => page.page_number), ocrError);
+        }
+      }
+
+      const ocrSummary = imagePages.length
+        ? ` OCR: ${ocrPagesRead} página(s) reconhecida(s)${ocrPagesFailed ? `, ${ocrPagesFailed} com falha` : ''}.`
+        : '';
+      const cappedSummary = imagePages.length === 40 ? ' O limite de 40 páginas com imagem por leitura foi atingido.' : '';
+      toast(`Texto extraído: ${pages.length} páginas, ${pagesWithText} com texto e ${characters.toLocaleString('pt-BR')} caracteres. O conteúdo foi gravado no Supabase.${ocrSummary}${cappedSummary}`);
       return true;
     } catch (error) {
       fail(error);
@@ -153,7 +202,7 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
   async function upload(file: File | undefined) {
     if (!file || !supabase) return;
     if (file.type !== 'application/pdf') return fail(new Error('Envie um arquivo PDF.'));
-    if (file.size > MAX_PDF_BYTES) return fail(new Error('O PDF deve ter no máximo 50 MB.'));
+    if (file.size > MAX_PDF_BYTES) return fail(new Error('O PDF deve ter no máximo 35 MB.'));
     setUploading(true);
     try {
       const hash = await sha256Hex(file);
