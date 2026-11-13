@@ -276,25 +276,24 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     const allSupportMaterials: JsonRecord[] = [];
     let collectionInfo: JsonRecord = {};
 
-    for (let partIndex = 0; partIndex < textParts.length; partIndex += 1) {
-      const part = textParts[partIndex];
+    const processTextPart = async (part: TextPart, partIndex: number): Promise<{ collection: JsonRecord; recipes: JsonRecord[]; supportMaterials: JsonRecord[] }> => {
       const prompt = [
         promptInstructions,
-        `Trecho ${partIndex + 1} de ${textParts.length}. Páginas originais abrangidas: ${part.firstPage} a ${part.lastPage}.`,
-        `Título do documento: ${document.title}.`,
+        \`Trecho \${partIndex + 1} de \${textParts.length}. Páginas originais abrangidas: \${part.firstPage} a \${part.lastPage}.\`,
+        \`Título do documento: \${document.title}.\`,
         part.text,
       ].join('\n\n');
 
       const aiResponse = await fetch('https://openrouter.ai/api/v1/responses', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: \`Bearer \${token}\`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'openrouter/free',
-          max_output_tokens: 24000,
+          max_output_tokens: 14000,
           text: { format: { type: 'json_object' } },
           input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }] }],
         }),
-        signal: AbortSignal.timeout(240_000),
+        signal: AbortSignal.timeout(180_000),
       });
 
       const aiResponseText = await aiResponse.text();
@@ -318,33 +317,45 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         const message = status === 401 ? 'A chave do OpenRouter não foi aceita. Confira o segredo cadastrado no cofre do Supabase.'
           : status === 402 ? 'O OpenRouter recusou a solicitação por limite ou saldo. Nenhuma receita foi cadastrada.'
           : status === 403 ? 'O OpenRouter não autorizou esta solicitação. Verifique as permissões da chave.'
-          : status === 429 ? `O limite gratuito do OpenRouter foi atingido durante o trecho ${partIndex + 1} de ${textParts.length}. Nenhuma receita foi cadastrada; aguarde e tente novamente.`
+          : status === 429 ? \`O limite gratuito do OpenRouter foi atingido durante o trecho \${partIndex + 1} de \${textParts.length}. Nenhuma receita foi cadastrada; aguarde e tente novamente.\`
           : status === 400 ? 'O OpenRouter rejeitou o texto extraído. O motivo técnico foi registrado; nenhuma receita foi cadastrada.'
           : 'O serviço gratuito de leitura não respondeu corretamente. Nenhuma receita foi cadastrada.';
-        return NextResponse.json({ error: message, code: 'OPENROUTER_ERROR', provider_status: status, part: partIndex + 1, total_parts: textParts.length }, { status: 502 });
+        throw new Error(message);
       }
 
       const outputText = getOutputText(aiPayload);
       if (!outputText) {
-        return NextResponse.json({ error: `A IA não retornou conteúdo legível no trecho ${partIndex + 1} de ${textParts.length}. Nenhuma receita foi cadastrada.`, code: 'PDF_PART_EMPTY' }, { status: 502 });
+        throw new Error(\`A IA não retornou conteúdo legível no trecho \${partIndex + 1} de \${textParts.length}. Nenhuma receita foi cadastrada.\`);
       }
       let parsed: JsonRecord;
       try {
         parsed = parseModelJson(outputText);
       } catch {
         console.error('OpenRouter retornou conteúdo fora do JSON esperado:', { part: partIndex + 1, totalParts: textParts.length });
-        return NextResponse.json({
-          error: `O leitor respondeu em formato inesperado no trecho ${partIndex + 1} de ${textParts.length}. Nenhuma receita foi cadastrada; tente novamente.`,
-          code: 'PDF_MODEL_INVALID_JSON', part: partIndex + 1, total_parts: textParts.length,
-        }, { status: 502 });
+        throw new Error(\`O leitor respondeu em formato inesperado no trecho \${partIndex + 1} de \${textParts.length}. Nenhuma receita foi cadastrada; tente novamente.\`);
       }
       const normalized = normalizePayload(parsed);
-      if (normalized.collection && typeof normalized.collection === 'object') {
-        const candidate = normalized.collection as JsonRecord;
-        if (!collectionInfo.name && candidate.name) collectionInfo = candidate;
-      }
-      if (Array.isArray(normalized.recipes)) allRecipes.push(...normalized.recipes as JsonRecord[]);
-      if (Array.isArray(normalized.support_materials)) allSupportMaterials.push(...normalized.support_materials as JsonRecord[]);
+      return {
+        collection: normalized.collection && typeof normalized.collection === 'object' ? normalized.collection as JsonRecord : {},
+        recipes: Array.isArray(normalized.recipes) ? normalized.recipes as JsonRecord[] : [],
+        supportMaterials: Array.isArray(normalized.support_materials) ? normalized.support_materials as JsonRecord[] : [],
+      };
+    };
+
+    let processedParts: Awaited<ReturnType<typeof processTextPart>>[];
+    try {
+      // Os trechos são independentes. Processá-los em paralelo evita exceder
+      // o limite de 5 minutos da função quando o modelo gratuito está lento.
+      processedParts = await Promise.all(textParts.map((part, index) => processTextPart(part, index)));
+    } catch (partError) {
+      const message = partError instanceof Error ? partError.message : 'Falha ao organizar o texto do PDF.';
+      return NextResponse.json({ error: message, code: 'PDF_PART_PROCESSING_FAILED' }, { status: 502 });
+    }
+
+    for (const normalized of processedParts) {
+      if (!collectionInfo.name && normalized.collection.name) collectionInfo = normalized.collection;
+      allRecipes.push(...normalized.recipes);
+      allSupportMaterials.push(...normalized.supportMaterials);
     }
 
     const payload: JsonRecord = {
