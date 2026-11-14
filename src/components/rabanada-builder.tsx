@@ -51,7 +51,7 @@ export function RabanadaBuilder({ recipes, compatibilities }: { recipes: Recipe[
     <section className="panel" style={{ marginBottom: 22, background: 'linear-gradient(160deg,#fffdf6,#fff)' }}>
       <div className="eyebrow">✦ Experiência interativa</div>
       <h2 style={{ margin: '6px 0 4px' }}>Monte sua rabanada</h2>
-      <p className="sub">Escolha o pão, veja os preparos da base e combine com um recheio do material original.</p>
+      <p className="sub">Escolha o pão e veja os preparos da base. Recheios e finalizações só aparecem após confirmação no material original.</p>
 
       {access.is_admin && unverified && (
         <div style={{ marginTop: 14 }}>
