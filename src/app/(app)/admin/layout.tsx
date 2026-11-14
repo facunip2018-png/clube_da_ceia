@@ -20,7 +20,7 @@ const TABS = [
 export default function AdminLayout({ children }: { children: ReactNode }) {
   usePageTitle('Painel administrativo');
   const pathname = usePathname();
-  const currentPath = pathname.replace(/\\/+$/, '') || '/';
+  const currentPath = pathname.replace(/\/+$/, '') || '/';
   return (
     <AdminOnly>
       <nav key={currentPath} className="adminnav noprint" aria-label="Painel administrativo">
