@@ -20,11 +20,12 @@ const TABS = [
 export default function AdminLayout({ children }: { children: ReactNode }) {
   usePageTitle('Painel administrativo');
   const pathname = usePathname();
+  const currentPath = pathname.replace(/\\/+$/, '') || '/';
   return (
     <AdminOnly>
-      <nav className="adminnav noprint" aria-label="Painel administrativo">
+      <nav key={currentPath} className="adminnav noprint" aria-label="Painel administrativo">
         {TABS.map((tab) => {
-          const active = tab.href === '/admin' ? pathname === '/admin' : pathname.startsWith(tab.href);
+          const active = tab.href === '/admin' ? currentPath === '/admin' : currentPath === tab.href || currentPath.startsWith(`${tab.href}/`);
           return <Link key={tab.href} href={tab.href} className={`filter ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined}>{tab.label}</Link>;
         })}
       </nav>
