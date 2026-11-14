@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { Check, CookingPot, Flame, Sandwich, Sparkles } from 'lucide-react';
 import type { Recipe, RecipeCompatibility } from '@/lib/types';
+import { visibleRecipeCompatibilities } from '@/lib/recipe-compatibility';
 import { Notice } from './ui';
 import { AddToPlanSheet } from './add-to-plan';
 import { useSession } from '@/data/session';
@@ -22,9 +23,13 @@ export function RabanadaBuilder({ recipes, compatibilities }: { recipes: Recipe[
   const [planning, setPlanning] = useState(false);
 
   const base = bases.find((b) => b.id === baseId) ?? null;
+  const visibleCompatibilities = useMemo(
+    () => visibleRecipeCompatibilities(compatibilities, access.is_admin),
+    [compatibilities, access.is_admin],
+  );
   const compatible = (relation: string) => {
     if (!base) return [];
-    const ids = new Set(compatibilities.filter((c) => c.recipe_id === base.id && c.relation === relation).map((c) => c.compatible_recipe_id));
+    const ids = new Set(visibleCompatibilities.filter((c) => c.recipe_id === base.id && c.relation === relation).map((c) => c.compatible_recipe_id));
     return recipes.filter((r) => ids.has(r.id));
   };
   const fillings = compatible('recheio');
@@ -83,7 +88,7 @@ export function RabanadaBuilder({ recipes, compatibilities }: { recipes: Recipe[
             {fillings.length ? (
               <div className="chips">{fillings.map((f) => option(f, f.id === fillingId, () => setFillingId(f.id)))}</div>
             ) : (
-              <p className="sub small">Nenhum recheio registrado para esta base no material.</p>
+              <p className="sub small">Nenhuma combinação confirmada para esta base no material.</p>
             )}
           </div>
         )}
