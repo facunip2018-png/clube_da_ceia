@@ -56,17 +56,22 @@ describe('modo demonstração: mesmas regras do banco', () => {
     expect(await store.list('source_documents')).toHaveLength(0);
   });
 
-  it('aplica o fluxo editorial: pontos de revisão → aprovação → permissão → publicação', async () => {
+  it('bloqueia publicação com pendências, ficha incompleta ou fonte sem permissão', async () => {
     store.persona = 'admin';
     const [recipe] = await store.list('recipes', { eq: { slug: SLUG } });
-    expect(await code(store.update('recipes', { id: recipe.id }, { status: 'approved' }))).toBe('FLAGS_PENDING');
-    const [stub] = await store.list('recipes', { eq: { slug: 'panetone-tradicional' } });
-    expect(await code(store.update('recipes', { id: stub.id }, { status: 'approved' }))).toBe('FLAGS_PENDING');
+    const warning = (await store.list('review_flags', { eq: { recipe_id: recipe.id } }))
+      .find((flag) => flag.severity === 'warning' || flag.severity === 'blocker');
+    expect(warning).toBeTruthy();
+    await store.update('review_flags', { id: warning!.id }, { resolved_at: null });
+
+    expect(await code(store.update('recipes', { id: recipe.id }, { status: 'published' }))).toBe('FLAGS_PENDING');
+    const [stub] = await store.list('recipes', { eq: { content_state: 'catalogued' } });
+    expect(stub).toBeTruthy();
+    expect(await code(store.update('recipes', { id: stub.id }, { status: 'published' }))).toBe('CONTENT_REQUIRED');
+
     for (const flag of await store.list('review_flags', { eq: { recipe_id: recipe.id } })) {
       await store.update('review_flags', { id: flag.id }, { resolved_at: new Date().toISOString() });
     }
-    expect(await code(store.update('recipes', { id: recipe.id }, { status: 'published' }))).toBe('APPROVAL_REQUIRED');
-    await store.update('recipes', { id: recipe.id }, { status: 'approved' });
     expect(await code(store.update('recipes', { id: recipe.id }, { status: 'published' }))).toBe('PERMISSION_REQUIRED');
     await store.update('source_documents', { id: recipe.source_document_id! }, { commercial_permission: 'confirmed' });
     const [published] = await store.update('recipes', { id: recipe.id }, { status: 'published' });
@@ -74,7 +79,7 @@ describe('modo demonstração: mesmas regras do banco', () => {
     expect(published.published_at).toBeTruthy();
     const actions = (await store.list('admin_audit_logs')).map((l) => l.action);
     expect(actions).toContain('source_documents.permission_changed');
-    expect(actions.filter((a) => a === 'recipes.status_changed')).toHaveLength(2);
+    expect(actions.filter((a) => a === 'recipes.status_changed')).toHaveLength(1);
     // retirar a permissão tira a receita do ar
     await store.update('source_documents', { id: recipe.source_document_id! }, { commercial_permission: 'restricted' });
     expect((await store.list('recipes', { eq: { id: recipe.id } }))[0].status).toBe('pending_permission');
