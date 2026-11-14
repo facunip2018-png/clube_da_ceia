@@ -331,8 +331,67 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       try {
         parsed = parseModelJson(outputText);
       } catch {
-        console.error('OpenRouter retornou conteúdo fora do JSON esperado:', { part: partIndex + 1, totalParts: textParts.length });
-        throw new Error(`O leitor respondeu em formato inesperado no trecho ${partIndex + 1} de ${textParts.length}. Nenhuma receita foi cadastrada; tente novamente.`);
+        // Alguns provedores gratuitos não respeitam o formato JSON na API
+        // Responses. Tenta uma segunda vez pela API Chat Completions do
+        // OpenRouter, que oferece response_format JSON amplamente suportado.
+        console.warn('Resposta Responses inválida; tentando Chat Completions em JSON:', {
+          part: partIndex + 1, totalParts: textParts.length,
+        });
+        try {
+          const retryResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'openrouter/free',
+              max_tokens: 12000,
+              response_format: { type: 'json_object' },
+              messages: [
+                { role: 'system', content: promptInstructions },
+                { role: 'user', content: [
+                  `Trecho ${partIndex + 1} de ${textParts.length}. Páginas originais abrangidas: ${part.firstPage} a ${part.lastPage}.`,
+                  `Título do documento: ${document.title}.`,
+                  part.text,
+                ].join('\\n\\n') },
+              ],
+            }),
+            signal: AbortSignal.timeout(90_000),
+          });
+          const retryText = await retryResponse.text();
+          let retryPayload: JsonRecord = {};
+          try {
+            const decoded: unknown = JSON.parse(retryText);
+            if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)) retryPayload = decoded as JsonRecord;
+          } catch {
+            // O erro final será tratado abaixo, sem gravar conteúdo parcial.
+          }
+          if (!retryResponse.ok) {
+            const retryError = retryPayload.error && typeof retryPayload.error === 'object'
+              ? retryPayload.error as JsonRecord : {};
+            console.error('OpenRouter JSON retry failed:', {
+              part: partIndex + 1, status: retryResponse.status,
+              message: cleanText(retryError.message) ?? retryText.slice(0, 800),
+            });
+            throw new Error('A segunda tentativa de leitura também falhou.');
+          }
+          const choices = Array.isArray(retryPayload.choices) ? retryPayload.choices : [];
+          const firstChoice = choices[0] && typeof choices[0] === 'object'
+            ? choices[0] as JsonRecord : {};
+          const message = firstChoice.message && typeof firstChoice.message === 'object'
+            ? firstChoice.message as JsonRecord : {};
+          const content = typeof message.content === 'string' ? message.content
+            : Array.isArray(message.content)
+              ? message.content.map((item) => item && typeof item === 'object'
+                ? cleanText((item as JsonRecord).text) ?? '' : '').join('\\n')
+              : '';
+          if (!content.trim()) throw new Error('A segunda tentativa não retornou texto.');
+          parsed = parseModelJson(content);
+        } catch (retryError) {
+          console.error('OpenRouter não conseguiu retornar JSON válido após nova tentativa:', {
+            part: partIndex + 1, totalParts: textParts.length,
+            message: retryError instanceof Error ? retryError.message : 'erro desconhecido',
+          });
+          throw new Error(`O leitor não conseguiu organizar o trecho ${partIndex + 1} de ${textParts.length}, mesmo após uma segunda tentativa. Nenhuma receita foi cadastrada.`);
+        }
       }
       const normalized = normalizePayload(parsed);
       return {
