@@ -169,6 +169,8 @@ export default function RecipePage() {
             </div>
           ) : !access.has_access ? (
             <div style={{ marginTop: 18 }}><Paywall title="Ficha completa para membros da temporada" /></div>
+          ) : loadingDetail ? (
+            <div style={{ marginTop: 18 }} aria-live="polite"><Loading /></div>
           ) : (
             <div className="empty" style={{ marginTop: 18, textAlign: 'left', justifyItems: 'start' }}>
               <div className="ico"><Hourglass /></div>
@@ -184,8 +186,6 @@ export default function RecipePage() {
           )}
         </div>
       </div>
-
-      {access.has_access && loadingDetail && <div style={{ marginTop: 26 }}><Loading /></div>}
 
       {canUse && (
         <>
