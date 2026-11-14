@@ -21,6 +21,10 @@ describe('visibilidade das combinações de rabanadas', () => {
     expect(visibleRecipeCompatibilities([confirmed, pending], false)).toEqual([confirmed]);
   });
 
+  it('não libera nenhuma combinação quando todas estão pendentes', () => {
+    expect(visibleRecipeCompatibilities([pending], false)).toEqual([]);
+  });
+
   it('mantém as combinações pendentes disponíveis apenas na prévia administrativa', () => {
     expect(visibleRecipeCompatibilities([confirmed, pending], true)).toEqual([confirmed, pending]);
   });
