@@ -293,7 +293,7 @@ export class LocalStore implements DataStore {
     const linked = this.table('recipe_components').filter((c) => c.recipe_id === recipe.id && c.linked_recipe_id);
     return checkRecipeTransition(recipe, next, {
       openFlags: this.table('review_flags').filter((f) => f.recipe_id === recipe.id && !f.resolved_at && f.severity !== 'info').length,
-      permission: document?.commercial_permission ?? null,
+      permission: recipe.source_document_id ? document?.commercial_permission ?? null : 'confirmed',
       linkedUnpublished: linked.filter((c) => !this.published(c.linked_recipe_id)).length,
       userId: this.userId,
       now: new Date().toISOString(),
