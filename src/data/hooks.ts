@@ -69,7 +69,10 @@ export function useRecipeDetail(recipe: Recipe | null | undefined): { detail: Re
   const id = recipe?.id ?? '';
   const components = useTable('recipe_components', canReadContent ? { eq: { recipe_id: id } } : null);
   const linkedIds = useMemo(() => (components.rows ?? []).map((c) => c.linked_recipe_id).filter((v): v is string => Boolean(v)), [components.rows]);
-  const scope = canReadContent && components.rows ? { in: { recipe_id: [id, ...linkedIds] } } : null;
+  // Busca primeiro o conteúdo próprio da receita, sem esperar a consulta de componentes.
+  // Depois inclui também os IDs dos componentes vinculados. Isso evita que fichas
+  // independentes (kind=component) fiquem presas no estado vazio durante a montagem.
+  const scope = canReadContent ? { in: { recipe_id: [id, ...linkedIds] } } : null;
   const ingredients = useTable('recipe_ingredients', scope);
   const steps = useTable('recipe_steps', scope);
   const stepIngredients = useTable('recipe_step_ingredients', scope);
