@@ -22,6 +22,14 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Sincronizar o lockfile com package.json
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Disponibilizar lockfile atualizado para revisão
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-lockfile
+          path: package-lock.json
+          retention-days: 1
       - name: Instalar dependências
         run: npm ci
       - name: Verificar TypeScript
