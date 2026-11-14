@@ -1,0 +1,31 @@
+name: Testes e validação
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validar:
+    name: Tipos, testes e conteúdo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Instalar dependências
+        run: npm ci
+      - name: Verificar TypeScript
+        run: npm run typecheck
+      - name: Executar testes automatizados
+        run: npm test
+      - name: Conferir conteúdo gerado
+        run: npm run content:check
