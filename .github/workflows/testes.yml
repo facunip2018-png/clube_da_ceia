@@ -8,7 +8,7 @@ on:
       - 'dependabot/**'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validar:
@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Baixar repositório
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
@@ -24,14 +26,22 @@ jobs:
           cache: npm
       - name: Sincronizar o lockfile com package.json
         run: npm install --package-lock-only --ignore-scripts
-      - name: Disponibilizar lockfile atualizado para revisão
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-lockfile
-          path: package-lock.json
-          retention-days: 1
       - name: Instalar dependências
         run: npm ci
+      - name: Regenerar SQL e dados derivados das migrações
+        run: npm run content:build
+      - name: Versionar lockfile e arquivos gerados
+        run: |
+          git add package-lock.json src/server/demo-data.generated.json supabase/seed.sql supabase/setup_completo.sql
+          if git diff --cached --quiet; then
+            echo "Arquivos gerados já estão sincronizados."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: sincroniza lockfile e SQL gerado"
+            branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+            git push origin "HEAD:${branch}"
+          fi
       - name: Verificar TypeScript
         run: npm run typecheck
       - name: Executar testes automatizados
