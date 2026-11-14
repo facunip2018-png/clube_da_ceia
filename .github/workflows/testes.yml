@@ -1,0 +1,50 @@
+name: Testes e validação
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches-ignore:
+      - 'dependabot/**'
+
+permissions:
+  contents: write
+
+jobs:
+  validar:
+    name: Tipos, testes e conteúdo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Sincronizar o lockfile com package.json
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Instalar dependências
+        run: npm ci
+      - name: Regenerar SQL e dados derivados das migrações
+        run: npm run content:build
+      - name: Versionar lockfile e arquivos gerados
+        run: |
+          git add package-lock.json src/server/demo-data.generated.json supabase/seed.sql supabase/setup_completo.sql
+          if git diff --cached --quiet; then
+            echo "Arquivos gerados já estão sincronizados."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: sincroniza lockfile e SQL gerado"
+            branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+            git push origin "HEAD:${branch}"
+          fi
+      - name: Verificar TypeScript
+        run: npm run typecheck
+      - name: Executar testes automatizados
+        run: npm test
+      - name: Conferir conteúdo gerado
+        run: npm run content:check

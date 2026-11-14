@@ -33,7 +33,7 @@ describe('estrutura e carga', () => {
     const rows = await db.sql<{ tablename: string; rowsecurity: boolean }>(
       `select tablename, rowsecurity from pg_tables where schemaname = 'public'`,
     );
-    expect(rows).toHaveLength(31);
+    expect(rows).toHaveLength(33);
     expect(rows.filter((r) => !r.rowsecurity)).toEqual([]);
   });
 
@@ -119,31 +119,41 @@ describe('fluxo editorial e permissão comercial', () => {
     });
   });
 
-  it('não aprova com pontos de revisão em aberto', async () => {
+  it('não publica com pontos de revisão em aberto', async () => {
+    const [flag] = await db.sql<{ id: string }>(
+      `select id from public.review_flags where recipe_id = $1 and severity in ('warning', 'blocker') order by created_at limit 1`,
+      [paveId],
+    );
+    expect(flag).toBeTruthy();
+    await db.sql(
+      `update public.review_flags set resolved_at = null, resolved_by = null, resolution_note = null where id = $1`,
+      [flag.id],
+    );
     await db.as('authenticated', admin, async (q) => {
-      const message = await errorOf(q(`update public.recipes set status = 'approved' where id = $1`, [paveId]));
+      const message = await errorOf(q(`update public.recipes set status = 'published' where id = $1`, [paveId]));
       expect(message).toContain('FLAGS_PENDING');
     });
   });
 
-  it('não aprova nem publica item sem ficha estruturada', async () => {
+  it('não publica item sem ficha estruturada', async () => {
+    const [stub] = await db.sql<{ id: string }>(
+      `select id from public.recipes where content_state = 'catalogued' order by position limit 1`,
+    );
+    expect(stub).toBeTruthy();
     await db.as('authenticated', admin, async (q) => {
-      const message = await errorOf(q(`update public.recipes set status = 'approved' where slug = 'panetone-tradicional'`));
+      const message = await errorOf(q(`update public.recipes set status = 'published' where id = $1`, [stub.id]));
       expect(message).toContain('CONTENT_REQUIRED');
     });
   });
 
-  it('após resolver os pontos, aprova; mas não publica sem permissão comercial confirmada', async () => {
+  it('após resolver os pontos, ainda exige permissão comercial para publicar', async () => {
     await db.as('authenticated', admin, async (q) => {
       await q(`update public.review_flags set resolved_at = now(), resolved_by = $2, resolution_note = 'Conferido com o PDF' where recipe_id = $1 and resolved_at is null`, [paveId, admin]);
-      const skip = await errorOf(q(`update public.recipes set status = 'published' where id = $1`, [paveId]));
-      expect(skip).toContain('APPROVAL_REQUIRED');
-      await q(`update public.recipes set status = 'approved' where id = $1`, [paveId]);
       const message = await errorOf(q(`update public.recipes set status = 'published' where id = $1`, [paveId]));
       expect(message).toContain('PERMISSION_REQUIRED');
     });
-    const [r] = await db.sql<{ status: string; reviewed_by: string }>(`select status, reviewed_by from public.recipes where id = $1`, [paveId]);
-    expect(r).toEqual({ status: 'approved', reviewed_by: admin });
+    const [r] = await db.sql<{ status: string }>(`select status from public.recipes where id = $1`, [paveId]);
+    expect(r.status).toBe('draft');
   });
 
   it('com a permissão confirmada, publica — e a vitrine pública passa a mostrar a receita', async () => {
@@ -170,7 +180,7 @@ describe('fluxo editorial e permissão comercial', () => {
     const actions = logs.map((l) => l.action);
     expect(actions).toContain('review_flags.resolved');
     expect(actions).toContain('source_documents.permission_changed');
-    expect(actions.filter((a) => a === 'recipes.status_changed')).toHaveLength(2);
+    expect(actions.filter((a) => a === 'recipes.status_changed')).toHaveLength(1);
     expect(logs.every((l) => l.actor_id === admin)).toBe(true);
     await db.as('authenticated', ana, async (q) => {
       expect(await q(`select id from public.admin_audit_logs`)).toHaveLength(0);
@@ -243,13 +253,11 @@ describe('conteúdo premium e acesso por temporada', () => {
       expect(await q(`select id from public.recipes`)).toHaveLength(0);
       expect(await q(`select id from public.recipe_ingredients`)).toHaveLength(0);
     });
-    // restaura: confirmar de novo devolve para revisão; o admin aprova e publica outra vez
+    // restaurar a permissão devolve a ficha ao rascunho; uma nova publicação exige nova checagem
     await db.as('authenticated', admin, async (q) => {
       await q(`update public.source_documents set commercial_permission = 'confirmed' where id = $1`, [paveDocId]);
       const [row] = await q<{ status: string }>(`select status from public.recipes where id = $1`, [paveId]);
-      expect(row.status).toBe('review');
-      await q(`update public.recipes set status = 'approved' where id = $1`, [paveId]);
-      await q(`update public.recipes set status = 'published' where id = $1`, [paveId]);
+      expect(row.status).toBe('draft');
     });
   });
 });
@@ -414,6 +422,9 @@ describe('pagamentos', () => {
   });
 
   it('pagamento aprovado libera o acesso uma única vez, mesmo com webhooks repetidos', async () => {
+    await db.as('authenticated', admin, async (q) => {
+      await q(`update public.recipes set status = 'published' where id = $1`, [paveId]);
+    });
     expect(await pay('approved')).toEqual({ result: 'applied', order_status: 'approved', membership: 'granted' });
     expect(await pay('approved')).toEqual({ result: 'applied', order_status: 'approved', membership: 'unchanged' });
     expect(await pay('approved')).toMatchObject({ membership: 'unchanged' });
@@ -462,7 +473,7 @@ describe('pagamentos', () => {
 });
 
 describe('storage', () => {
-  it('PDFs originais ficam em bucket privado, acessível apenas a administradores', async () => {
+  it('PDFs originais ficam privados para visitantes e acessíveis a assinantes ativos; fotos são isoladas por pasta', async () => {
     const buckets = await db.sql<{ id: string; public: boolean }>(`select id, public from storage.buckets order by id`);
     expect(buckets).toEqual([
       { id: 'challenge-photos', public: false },
@@ -482,7 +493,8 @@ describe('storage', () => {
       expect(await errorOf(q(`insert into storage.objects (bucket_id, name) values ('recipe-images', 'capa.jpg')`))).toMatch(/row-level security/i);
     });
     await db.as('authenticated', bia, async (q) => {
-      expect(await q(`select id from storage.objects`)).toHaveLength(0);
+      expect(await q(`select id from storage.objects where bucket_id = 'source-documents'`)).toHaveLength(1);
+      expect(await q(`select id from storage.objects where bucket_id = 'challenge-photos'`)).toHaveLength(0);
     });
   });
 });
