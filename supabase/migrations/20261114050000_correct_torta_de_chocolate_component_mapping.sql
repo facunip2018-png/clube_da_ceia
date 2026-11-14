@@ -62,7 +62,12 @@ begin
     from public.recipe_ingredients
     where recipe_id = target_recipe_id;
 
-    if ingredients_count <> 7 or ingredients_on_source_page <> 7 then
+    if ingredients_count <> 7
+      or ingredients_on_source_page <> 7
+      or (select count(distinct position) from public.recipe_ingredients where recipe_id = target_recipe_id) <> 7
+      or (select min(position) from public.recipe_ingredients where recipe_id = target_recipe_id) <> 1
+      or (select max(position) from public.recipe_ingredients where recipe_id = target_recipe_id) <> 7
+    then
       raise exception 'A Torta de Chocolate não possui os 7 ingredientes esperados na página 5; nenhum vínculo foi alterado.';
     end if;
 
@@ -71,7 +76,12 @@ begin
     from public.recipe_steps
     where recipe_id = target_recipe_id;
 
-    if steps_count <> 4 or steps_on_source_page <> 4 then
+    if steps_count <> 4
+      or steps_on_source_page <> 4
+      or (select count(distinct position) from public.recipe_steps where recipe_id = target_recipe_id) <> 4
+      or (select min(position) from public.recipe_steps where recipe_id = target_recipe_id) <> 1
+      or (select max(position) from public.recipe_steps where recipe_id = target_recipe_id) <> 4
+    then
       raise exception 'A Torta de Chocolate não possui as 4 etapas esperadas na página 5; nenhum vínculo foi alterado.';
     end if;
 
