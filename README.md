@@ -41,60 +41,57 @@ fichas não publicadas) a qualquer visitante. Ele é ignorado automaticamente qu
 
 ```bash
 npm install
-cp .env.example .env.local        # depois edite: NEXT_PUBLIC_DEMO_MODE=true para experimentar sem Supabase
-npm run dev                       # http://localhost:3000
+cp .env.example .env.local
+npm run dev
 ```
 
 Outros comandos:
 
 ```bash
-npm run typecheck      # verificação de tipos
-npm test               # 87 testes (regras de negócio + banco de dados)
-npm run content:build  # valida content/ e gera supabase/seed.sql, setup_completo.sql e os dados da demonstração
-npm run content:check  # confere se os arquivos gerados estão em dia
-npm run db:conferir    # gera o SQL que confere o banco do Supabase contra este repositório
-npm run test:hosted    # teste de fumaça contra o Supabase real (contas de teste; ver docs/TESTES.md)
+npm run typecheck
+npm test
+npm run content:build
+npm run content:check
+npm run db:conferir
+npm run test:hosted
 npm run build && npm start
 ```
 
 ## Colocar no ar
 
-Passo a passo completo em **[docs/CONFIGURACAO.md](docs/CONFIGURACAO.md)** (Supabase → GitHub → Vercel →
-primeiro administrador → Mercado Pago → OpenAI).
+Passo a passo técnico em **[docs/CONFIGURACAO.md](docs/CONFIGURACAO.md)**.
 
 ## Documentação
 
-- [docs/CONFIGURACAO.md](docs/CONFIGURACAO.md) — configuração de Supabase, GitHub, Vercel, Mercado Pago e OpenAI
-- [docs/CONTEUDO.md](docs/CONTEUDO.md) — como as receitas entram no app e o que falta de cada PDF
-- [docs/TESTES.md](docs/TESTES.md) — o que foi testado, como repetir e o que ainda depende de credenciais
-- [docs/RELATORIO-FASES.md](docs/RELATORIO-FASES.md) — situação de cada uma das 8 fases do projeto
+- [Manual do cliente](docs/MANUAL-CLIENTE.md) — como entrar, encontrar receitas, montar a ceia, usar a lista, favoritas, Chef, calculadora e modo cozinheiro.
+- [Manual do administrador](docs/MANUAL-ADMINISTRADOR.md) — operação do painel, cadastro e publicação de receitas, pagamentos/webhook, Gumlet, segurança e pendências.
+- [Configuração técnica](docs/CONFIGURACAO.md) — configuração de Supabase, GitHub, Vercel, Mercado Pago e serviços.
+- [Conteúdo](docs/CONTEUDO.md) — como as receitas entram no app.
+- [Testes](docs/TESTES.md) — o que foi testado e o que ainda depende de credenciais.
+- [Relatório por fases](docs/RELATORIO-FASES.md) — situação histórica das fases do projeto.
+
+> **Nota de manutenção:** os manuais de cliente e administrador são a referência operacional atual deste conjunto. Alguns documentos técnicos históricos podem conter estados antigos do catálogo; confira o painel e o Supabase para a situação atual.
 
 ## Estrutura
 
 ```
-content/                 Fonte do conteúdo (coleções, documentos, catálogo, fichas estruturadas)
-scripts/content-build.mjs  Valida o conteúdo e gera a carga do banco
-supabase/migrations/     Estrutura, funções, segurança (RLS) e Storage
-supabase/seed.sql        Carga de conteúdo (gerada, idempotente)
-supabase/setup_completo.sql  Tudo em um arquivo, para colar no SQL Editor
-src/lib/                 Regras de negócio puras (porções, compras, cronograma, temporizadores, Chef, pagamentos)
-src/data/                Acesso a dados: Supabase (produção) e armazenamento local (demonstração)
-src/server/              Código que só roda no servidor (chaves privadas)
-src/app/                 Telas e rotas de API
-tests/                   Testes unitários, de banco e de ponta a ponta
+content/                    Fonte do conteúdo (coleções, documentos e fichas estruturadas)
+scripts/content-build.mjs   Valida o conteúdo e gera a carga do banco
+supabase/migrations/        Estrutura, funções, segurança (RLS) e Storage
+supabase/seed.sql           Carga de conteúdo (gerada, idempotente)
+src/lib/                    Regras de negócio puras
+src/data/                   Acesso a dados: Supabase e armazenamento local de demonstração
+src/server/                 Código que só roda no servidor (chaves privadas)
+src/app/                    Telas e rotas de API
+tests/                      Testes unitários, de banco e de ponta a ponta
 ```
 
 ## Segurança, em resumo
 
-- RLS ligado nas 31 tabelas; cada pessoa só enxerga os próprios planos, listas, favoritos, sessões e conversas.
-- Ficha completa (ingredientes, etapas, tempos) só é lida por quem tem acesso válido à temporada **e** apenas de receitas publicadas.
-- Papel de administrador fica no banco e não pode ser alterado pela própria pessoa; `/admin` é protegido no servidor.
-- Chaves da OpenAI, do Mercado Pago e a `service_role` do Supabase existem somente no servidor.
-- O acesso pago é liberado exclusivamente pelo webhook assinado, após consulta do pagamento na API do Mercado Pago; o processamento é idempotente.
-- PDFs originais ficam em bucket privado, acessível só a administradores.
+- RLS nas tabelas; cada pessoa só enxerga seus próprios planos, listas, favoritos, sessões e conversas.
+- Ficha completa só é lida por quem tem acesso válido à temporada e apenas para receitas publicadas.
+- Papel de administrador fica no banco e não pode ser alterado pela própria pessoa; painel protegido no servidor.
+- Chaves privadas existem somente no servidor.
+- O acesso pago é liberado pelo webhook validado, após consulta do pagamento na API do Mercado Pago; o processamento é idempotente.
+- PDFs originais ficam em bucket privado.
 - O service worker guarda apenas arquivos estáticos: conteúdo premium não fica disponível offline.
-
-## Imagens
-
-As fotos de capa em `public/images/` são **ilustrações geradas por IA** para a identidade do app; não foram
-extraídas dos e-books. Cada receita pode receber outra imagem pelo painel (campo “Imagem de capa”).
