@@ -33,7 +33,7 @@ describe('estrutura e carga', () => {
     const rows = await db.sql<{ tablename: string; rowsecurity: boolean }>(
       `select tablename, rowsecurity from pg_tables where schemaname = 'public'`,
     );
-    expect(rows).toHaveLength(31);
+    expect(rows).toHaveLength(33);
     expect(rows.filter((r) => !r.rowsecurity)).toEqual([]);
   });
 
@@ -503,7 +503,7 @@ describe('instalação pelo arquivo único', () => {
       expect(await count(single, 'recipes')).toBe(62);
       expect(await count(single, 'recipe_steps')).toBe(449);
       const [{ n }] = await single.sql<{ n: number }>(`select count(*)::int as n from pg_tables where schemaname = 'public' and rowsecurity`);
-      expect(n).toBe(31);
+      expect(n).toBe(33);
       const [{ policies }] = await single.sql<{ policies: number }>(`select count(*)::int as policies from pg_policies where schemaname in ('public', 'storage')`);
       const [{ expected }] = await db.sql<{ expected: number }>(`select count(*)::int as expected from pg_policies where schemaname in ('public', 'storage')`);
       expect(policies).toBe(expected);
