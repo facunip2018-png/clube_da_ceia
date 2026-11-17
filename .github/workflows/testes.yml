@@ -35,6 +35,18 @@ jobs:
           fi
       - name: Instalar dependências
         run: npm ci
+      - name: Gerar SQL consolidado e dados derivados
+        run: npm run content:build
+      - name: Registrar arquivos gerados no branch
+        if: github.event_name == 'push'
+        run: |
+          if ! git diff --quiet -- supabase/seed.sql supabase/setup_completo.sql src/server/demo-data.generated.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add supabase/seed.sql supabase/setup_completo.sql src/server/demo-data.generated.json
+            git commit -m "chore: atualiza arquivos derivados"
+            git push
+          fi
       - name: Conferir conteúdo gerado
         run: npm run content:check
       - name: Verificar TypeScript
