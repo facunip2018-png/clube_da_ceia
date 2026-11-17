@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState } from 'react';
 import {
-  BookMarked, CalendarHeart, ChefHat, Clock, Download, Heart, Hourglass, Lightbulb, Play, RotateCcw, Scale, SearchX, Settings, ShoppingBasket,
+  BookMarked, CalendarHeart, ChefHat, Clapperboard, Clock, Download, Heart, Hourglass, Lightbulb, Play, RotateCcw, Scale, SearchX, Settings, ShoppingBasket,
   Sparkles, Timer, TriangleAlert, Utensils,
 } from 'lucide-react';
 import { useFavoriteIds, useIngredientCatalog, useRecipeDetail, useTable } from '@/data/hooks';
@@ -16,11 +16,12 @@ import { Paywall } from '@/components/gates';
 import { useTimers } from '@/components/timers';
 import { useToast } from '@/components/toast';
 import { Cover, Empty, Loading, Notice, Stepper, usePageTitle } from '@/components/ui';
+import { VideoPlayer } from '@/components/video-player';
 import { describeYield, factorFromTarget, scaleIngredient, targetFromFactor, yieldControl } from '@/lib/scaling';
 import { DIFFICULTY_LABELS, knownTimes } from '@/lib/recipe-view';
 import { formatClock, formatDuration, formatMinutes, formatQuantity, pageRange } from '@/lib/format';
 import { remainingMs } from '@/lib/timers';
-import type { RecipeDetail, RecipeStepTimer } from '@/lib/types';
+import type { RecipeDetail, RecipeStepTimer, Video } from '@/lib/types';
 
 function StepTimer({ timer, detail }: { timer: RecipeStepTimer; detail: RecipeDetail }) {
   const timers = useTimers();
@@ -57,12 +58,14 @@ export default function RecipePage() {
   const { rows, loading } = useTable('recipes', { eq: { slug } });
   const recipe = rows?.[0] ?? null;
   const { detail, loading: loadingDetail } = useRecipeDetail(recipe);
+  const { rows: publishedVideos } = useTable('videos', recipe ? { eq: { status: 'published' }, order: [['position', 'asc'], ['created_at', 'desc']] } : null);
   const favorites = useFavoriteIds();
   const catalog = useIngredientCatalog();
   const [factor, setFactor] = useState(1);
   const [planning, setPlanning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [showRecipeVideos, setShowRecipeVideos] = useState(false);
   usePageTitle(recipe?.title ?? 'Receita');
 
   if (loading || !ready) return <Loading />;
@@ -82,6 +85,9 @@ export default function RecipePage() {
   const pages = pageRange(recipe.source_page_start, recipe.source_page_end);
   const cover = recipe.cover_image ?? collection?.cover_image ?? null;
   const adjusted = Math.abs(factor - 1) > 1e-9;
+  const recipeVideos = (publishedVideos ?? []).filter((video: Video) =>
+    video.recipe_id === recipe.id || (video.recipe_id === null && video.collection_id === recipe.collection_id),
+  );
 
   async function onFavorite() {
     try {
@@ -166,7 +172,25 @@ export default function RecipePage() {
                 <Heart fill={isFavorite ? 'currentColor' : 'none'} color={isFavorite ? '#b8413a' : undefined} /> {isFavorite ? 'Nas favoritas' : 'Salvar nas favoritas'}
               </button>
               <Link href={`/chef?receita=${recipe.slug}`} className="btn outline"><Sparkles /> Perguntar ao Chef</Link>
+              {recipeVideos.length > 0 && (
+                <button type="button" className="btn primary wide" onClick={() => setShowRecipeVideos((value) => !value)} aria-expanded={showRecipeVideos}>
+                  <Clapperboard /> {showRecipeVideos ? 'Ocultar vídeos da receita' : `Assistir aos vídeos desta receita (${recipeVideos.length})`}
+                </button>
+              )}
             </div>
+          {showRecipeVideos && recipeVideos.length > 0 && (
+            <section className="recipe-video-list" aria-label="Vídeos desta receita">
+              {recipeVideos.map((video) => (
+                <article className="recipe-video-card" key={video.id}>
+                  <VideoPlayer hlsUrl={video.hls_url} mp4Url={video.mp4_url} poster={video.thumbnail_url} title={video.title} />
+                  <div className="recipe-video-copy">
+                    <h3>{video.title}</h3>
+                    {video.description && <p className="sub">{video.description}</p>}
+                  </div>
+                </article>
+              ))}
+            </section>
+          )}
           ) : !access.has_access ? (
             <div style={{ marginTop: 18 }}><Paywall title="Ficha completa para membros da temporada" /></div>
           ) : loadingDetail ? (
