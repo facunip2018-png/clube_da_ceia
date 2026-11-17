@@ -29,7 +29,7 @@ afterAll(async () => {
 });
 
 describe('estrutura e carga', () => {
-  it('cria as 31 tabelas, todas com RLS ligado', async () => {
+  it('cria as 33 tabelas, todas com RLS ligado', async () => {
     const rows = await db.sql<{ tablename: string; rowsecurity: boolean }>(
       `select tablename, rowsecurity from pg_tables where schemaname = 'public'`,
     );
@@ -128,7 +128,7 @@ describe('fluxo editorial e permissão comercial', () => {
 
   it('não aprova nem publica item sem ficha estruturada', async () => {
     await db.as('authenticated', admin, async (q) => {
-      const message = await errorOf(q(`update public.recipes set status = 'approved' where slug = 'panetone-tradicional'`));
+      const message = await errorOf(q(`update public.recipes set status = 'approved' where slug = 'pave-de-chocolate'`));
       expect(message).toContain('CONTENT_REQUIRED');
     });
   });
@@ -462,7 +462,7 @@ describe('pagamentos', () => {
 });
 
 describe('storage', () => {
-  it('PDFs originais ficam em bucket privado, acessível apenas a administradores', async () => {
+  it('PDFs originais ficam em bucket privado, acessível a administradores e assinantes com acesso', async () => {
     const buckets = await db.sql<{ id: string; public: boolean }>(`select id, public from storage.buckets order by id`);
     expect(buckets).toEqual([
       { id: 'challenge-photos', public: false },
@@ -473,15 +473,20 @@ describe('storage', () => {
       await q(`insert into storage.objects (bucket_id, name) values ('source-documents', 'paves/pave-floresta-negra.pdf')`);
       expect(await q(`select id from storage.objects where bucket_id = 'source-documents'`)).toHaveLength(1);
     });
+    // Ana possui membership ativa nesta etapa da suíte: assinantes podem baixar o PDF privado,
+    // mas não podem enviar nem alterar arquivos do bucket de origem.
     await db.as('authenticated', ana, async (q) => {
-      expect(await q(`select id from storage.objects where bucket_id = 'source-documents'`)).toHaveLength(0);
-      expect(await errorOf(q(`insert into storage.objects (bucket_id, name) values ('source-documents', 'x.pdf')`))).toMatch(/row-level security/i);
+      expect(await q(`select id from storage.objects where bucket_id = 'source-documents'`)).toHaveLength(1);
+      expect(await errorOf(q(`insert into storage.objects (bucket_id, name) values ('source-documents', 'nao-permitido.pdf')`))).toMatch(/row-level security/i);
       // fotos: só na própria pasta
       await q(`insert into storage.objects (bucket_id, name) values ('challenge-photos', $1)`, [`${ana}/pave.jpg`]);
       expect(await errorOf(q(`insert into storage.objects (bucket_id, name) values ('challenge-photos', $1)`, [`${bia}/pave.jpg`]))).toMatch(/row-level security/i);
       expect(await errorOf(q(`insert into storage.objects (bucket_id, name) values ('recipe-images', 'capa.jpg')`))).toMatch(/row-level security/i);
     });
-    await db.as('authenticated', bia, async (q) => {
+    const noAccess = await db.createUser('sem-acesso@clube.test');
+    await db.as('authenticated', noAccess, async (q) => {
+      expect(await q(`select id from storage.objects where bucket_id = 'source-documents'`)).toHaveLength(0);
+      expect(await errorOf(q(`insert into storage.objects (bucket_id, name) values ('source-documents', 'x.pdf')`))).toMatch(/row-level security/i);
       expect(await q(`select id from storage.objects`)).toHaveLength(0);
     });
   });

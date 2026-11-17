@@ -51,7 +51,7 @@ begin
     new.published_at := coalesce(new.published_at, now());
   end if;
 
-  if new.status in ('draft', 'review', 'pending_permission') then
+  if new.status in ('draft', 'review') then
     new.reviewed_at := null;
     new.reviewed_by := null;
   end if;
