@@ -2180,7 +2180,7 @@ begin
   update public.source_documents set import_notes=concat_ws(E'\n',nullif(import_notes,''),'Leitura automática em '||to_char(now(),'YYYY-MM-DD HH24:MI')||': '||v_created||' receita(s) criada(s), '||v_skipped||' ignorada(s), '||v_materials||' material(is) de apoio.') where id=p_document_id;
   return jsonb_build_object('created',v_created,'skipped',v_skipped,'support_materials',v_materials,'published',v_permission_ok);
 end;
-$function$
+$function$;
 
 -- >>>>>>>>>> migrations/20261114011648_fix_support_materials_slug_expression.sql
 -- Corrige a precedência dos operadores ao gerar o slug de materiais de apoio.
@@ -2343,7 +2343,7 @@ begin
   update public.source_documents set import_notes=concat_ws(E'\n',nullif(import_notes,''),'Leitura automática em '||to_char(now(),'YYYY-MM-DD HH24:MI')||': '||v_created||' receita(s) criada(s), '||v_skipped||' ignorada(s), '||v_materials||' material(is) de apoio.') where id=p_document_id;
   return jsonb_build_object('created',v_created,'skipped',v_skipped,'support_materials',v_materials,'published',v_permission_ok);
 end;
-$function$
+$function$;
 
 -- >>>>>>>>>> migrations/20261114020000_structure_torta_de_chocolate.sql
 -- Registra a estruturação inicial da Torta de Chocolate.
@@ -5396,7 +5396,7 @@ begin
     new.published_at := coalesce(new.published_at, now());
   end if;
 
-  if new.status in ('draft', 'review', 'pending_permission') then
+  if new.status in ('draft', 'review') then
     new.reviewed_at := null;
     new.reviewed_by := null;
   end if;
