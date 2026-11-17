@@ -159,6 +159,7 @@ export default function RecipePage() {
           </div>
 
           {canUse ? (
+            <>
             <div className="actions">
               {detail.source?.storage_path && (
                 <button type="button" className="btn outline" onClick={onDownloadOriginalPdf} disabled={downloadingPdf}>
@@ -191,6 +192,7 @@ export default function RecipePage() {
               ))}
             </section>
           )}
+            </>
           ) : !access.has_access ? (
             <div style={{ marginTop: 18 }}><Paywall title="Ficha completa para membros da temporada" /></div>
           ) : loadingDetail ? (
