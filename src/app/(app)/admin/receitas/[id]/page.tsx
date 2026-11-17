@@ -236,6 +236,7 @@ export default function AdminRecipeEditor() {
   const act = useAdminAction();
   const { rows: recipes, loading } = useTable('recipes', { eq: { id } });
   const recipe = recipes?.[0];
+  const { rows: allRecipes, loading: allRecipesLoading } = useTable('recipes', null);
   const scope = recipe ? { eq: { recipe_id: recipe.id } } : null;
   const { rows: components } = useTable('recipe_components', scope);
   const { rows: ingredients } = useTable('recipe_ingredients', scope);
@@ -257,6 +258,11 @@ export default function AdminRecipeEditor() {
 
   const document = documents?.[0];
   const open = (flags ?? []).filter((f) => !f.resolved_at && f.severity !== 'info');
+  const linkedComponents = (components ?? []).filter((component) => component.linked_recipe_id);
+  const linkedUnpublished = linkedComponents.filter((component) =>
+    !allRecipes?.some((item) => item.id === component.linked_recipe_id && item.status === 'published'),
+  ).length;
+  const linkedCheckReady = linkedComponents.length === 0 || !allRecipesLoading;
   const sortedFlags = [...(flags ?? [])].sort((a, b) => Number(Boolean(a.resolved_at)) - Number(Boolean(b.resolved_at)) || (a.severity === 'info' ? 1 : 0) - (b.severity === 'info' ? 1 : 0));
   const structured = recipe.content_state === 'structured';
   const checks = [
@@ -264,7 +270,11 @@ export default function AdminRecipeEditor() {
     { ok: structured && open.length === 0, label: open.length ? `${open.length} ponto(s) de revisão em aberto` : 'Pontos de revisão resolvidos' },
     { ok: Boolean(recipe.reviewed_at), label: recipe.reviewed_at ? 'Aprovada na revisão' : 'Aprovação da revisão' },
     { ok: document?.commercial_permission === 'confirmed', label: `Permissão comercial do material: ${PERMISSION_LABELS[document?.commercial_permission ?? 'unknown']}` },
+    { ok: linkedCheckReady && linkedUnpublished === 0, label: !linkedCheckReady ? 'Conferindo componentes compartilhados' : linkedUnpublished ? `${linkedUnpublished} componente(s) compartilhado(s) não publicado(s)` : 'Componentes compartilhados publicados' },
   ];
+  const canApprove = structured && open.length === 0;
+  const publicationRequirementsOk = checks.every((check) => check.ok);
+  const canPublish = recipe.status === 'approved' && publicationRequirementsOk;
 
   return (
     <>
@@ -299,17 +309,25 @@ export default function AdminRecipeEditor() {
                 <li key={check.label} className={check.ok ? 'ok' : ''}><span className="mark">{check.ok ? <Check /> : <X />}</span><div>{check.label}</div></li>
               ))}
             </ul>
+            {recipe.status === 'published' && !publicationRequirementsOk && (
+              <Notice>Esta ficha foi publicada no fluxo simplificado anterior e ainda não atende a todos os requisitos atuais. O conteúdo existente foi preservado; use “Retirar para revisão” antes de editar ou tentar publicar novamente.</Notice>
+            )}
             <hr className="divider" />
             {recipe.status === 'pending_permission' ? (
               <Notice>Esta receita está bloqueada até a permissão comercial do documento ser confirmada em <Link href="/admin/documentos"><b>Documentos</b></Link>.</Notice>
             ) : (
               <div className="row">
-                {statusActions(recipe.status).map((action) => (
-                  <button key={action.to} type="button" className={`btn sm ${action.tone === 'primary' ? 'primary' : action.tone === 'danger' ? 'danger' : 'outline'}`}
-                    onClick={() => act(() => store.update('recipes', { id: recipe.id }, { status: action.to }), { tables: [...TABLES], success: `Situação: ${action.label}` })}>
-                    {action.label}
-                  </button>
-                ))}
+                {statusActions(recipe.status).map((action) => {
+                  const disabled = action.to === 'approved' ? !canApprove : action.to === 'published' ? !canPublish : false;
+                  return (
+                    <button key={action.to} type="button" disabled={disabled}
+                      title={disabled ? action.to === 'approved' ? 'Estruture a ficha e resolva os pontos de revisão.' : 'Aprove a ficha, confirme a permissão comercial e publique os componentes compartilhados.' : undefined}
+                      className={`btn sm ${action.tone === 'primary' ? 'primary' : action.tone === 'danger' ? 'danger' : 'outline'}`}
+                      onClick={() => act(() => store.update('recipes', { id: recipe.id }, { status: action.to }), { tables: [...TABLES], success: `Situação: ${action.label}` })}>
+                      {action.label}
+                    </button>
+                  );
+                })}
               </div>
             )}
             {document && (
