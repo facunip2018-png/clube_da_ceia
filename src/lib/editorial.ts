@@ -1,5 +1,6 @@
 /**
- * Fluxo editorial simplificado: receitas completas podem ser disponibilizadas diretamente.
+ * Fluxo editorial: draft → review → approved → published.
+ * A validação do cliente melhora a interface; o gatilho do Supabase é a autoridade final.
  */
 import type { Recipe, RecipeStatus } from './types';
 
@@ -20,11 +21,39 @@ export interface TransitionContext {
 
 export function checkRecipeTransition(recipe: Recipe, next: RecipeStatus, ctx: TransitionContext): Partial<Recipe> {
   const patch: Partial<Recipe> = { status: next };
-  if (next === 'published') patch.published_at = recipe.published_at ?? ctx.now;
+
+  if (next === 'approved' || next === 'published') {
+    if (recipe.content_state !== 'structured') {
+      throw new AppError('CONTENT_REQUIRED', 'A ficha precisa ter ingredientes e etapas estruturados.');
+    }
+    if (ctx.openFlags > 0) {
+      throw new AppError('FLAGS_PENDING', 'Resolva os pontos de revisão antes de aprovar ou publicar.');
+    }
+  }
+
   if (next === 'approved') {
     patch.reviewed_at = ctx.now;
     patch.reviewed_by = ctx.userId ?? recipe.reviewed_by;
   }
+
+  if (next === 'published') {
+    if (recipe.status !== 'approved' || !recipe.reviewed_at) {
+      throw new AppError('APPROVAL_REQUIRED', 'A ficha precisa ser aprovada antes de ser publicada.');
+    }
+    if (ctx.permission !== 'confirmed') {
+      throw new AppError('PERMISSION_REQUIRED', 'Confirme a permissão comercial do documento de origem.');
+    }
+    if (ctx.linkedUnpublished > 0) {
+      throw new AppError('LINKED_COMPONENT_UNPUBLISHED', 'Publique os componentes compartilhados antes da receita.');
+    }
+    patch.published_at = recipe.published_at ?? ctx.now;
+  }
+
+  if (next === 'draft' || next === 'review' || next === 'pending_permission') {
+    patch.reviewed_at = null;
+    patch.reviewed_by = null;
+  }
+
   return patch;
 }
 
@@ -38,12 +67,23 @@ export function statusActions(status: RecipeStatus): StatusAction[] {
   switch (status) {
     case 'draft':
     case 'review':
+      return [
+        { to: 'approved', label: 'Aprovar ficha', tone: 'primary' },
+        { to: 'archived', label: 'Arquivar', tone: 'default' },
+      ];
     case 'approved':
-      return [{ to: 'published', label: 'Disponibilizar aos assinantes', tone: 'primary' }, { to: 'archived', label: 'Arquivar', tone: 'default' }];
+      return [
+        { to: 'published', label: 'Disponibilizar aos assinantes', tone: 'primary' },
+        { to: 'review', label: 'Voltar à revisão', tone: 'default' },
+        { to: 'archived', label: 'Arquivar', tone: 'default' },
+      ];
     case 'published':
-      return [{ to: 'archived', label: 'Retirar da biblioteca', tone: 'danger' }];
+      return [
+        { to: 'review', label: 'Retirar para revisão', tone: 'danger' },
+        { to: 'archived', label: 'Arquivar', tone: 'default' },
+      ];
     case 'archived':
-      return [{ to: 'published', label: 'Disponibilizar aos assinantes', tone: 'primary' }];
+      return [{ to: 'review', label: 'Retornar à revisão', tone: 'default' }];
     default:
       return [];
   }
@@ -54,7 +94,7 @@ export function toAppError(error: unknown): AppError {
   if (error instanceof AppError) return error;
   const raw = error as { message?: string; code?: string } | null;
   const message = raw?.message ?? String(error);
-  const tagged = message.match(/^([A-Z][A-Z_]+):\\s*(.*)$/s);
+  const tagged = message.match(/^([A-Z][A-Z_]+):\s*(.*)$/s);
   if (tagged) return new AppError(tagged[1], tagged[2] ? tagged[2].charAt(0).toLocaleUpperCase('pt-BR') + tagged[2].slice(1) : tagged[1]);
   if (/^[A-Z][A-Z_]+$/.test(message)) return new AppError(message, FRIENDLY[message] ?? message);
   const code = raw?.code ?? '';
