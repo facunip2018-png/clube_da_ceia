@@ -644,3 +644,8 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; min-width
 .gumlet-player-error svg { flex:none; margin-top:1px; }
 @media(max-width:900px) { .video-library-grid{grid-template-columns:1fr}.admin-video-cta{align-items:flex-start;flex-wrap:wrap}.admin-video-cta-action{margin-left:76px} }
 @media(max-width:560px) { .admin-video-cta{padding:17px;gap:12px}.admin-video-cta-icon{width:48px;height:48px;border-radius:14px}.admin-video-cta-copy strong{font-size:20px}.admin-video-banner{align-items:flex-start;padding:16px}.admin-video-banner-icon{width:48px;height:48px}.video-admin-row{align-items:flex-start}.video-admin-row > .row{flex-wrap:nowrap} }
+
+.recipe-video-list { display:grid; gap:14px; margin-top:12px; }
+.recipe-video-card { overflow:hidden; border:1px solid var(--line); border-radius:16px; background:#fff; }
+.recipe-video-copy { display:grid; gap:5px; padding:13px 16px; }
+.recipe-video-copy h3 { margin:0; font-size:18px; }
