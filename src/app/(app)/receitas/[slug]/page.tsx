@@ -173,15 +173,13 @@ export default function RecipePage() {
                 <Heart fill={isFavorite ? 'currentColor' : 'none'} color={isFavorite ? '#b8413a' : undefined} /> {isFavorite ? 'Nas favoritas' : 'Salvar nas favoritas'}
               </button>
               <Link href={`/chef?receita=${recipe.slug}`} className="btn outline"><Sparkles /> Perguntar ao Chef</Link>
-              {recipeVideos.length > 0 && (
-                <button type="button" className="btn primary wide" onClick={() => setShowRecipeVideos((value) => !value)} aria-expanded={showRecipeVideos}>
-                  <Clapperboard /> {showRecipeVideos ? 'Ocultar vídeos da receita' : `Assistir aos vídeos desta receita (${recipeVideos.length})`}
-                </button>
-              )}
+              <button type="button" className="btn primary wide" onClick={() => setShowRecipeVideos((value) => !value)} aria-expanded={showRecipeVideos}>
+                <Clapperboard /> {showRecipeVideos ? 'Ocultar vídeos da receita' : recipeVideos.length ? `Assistir aos vídeos desta receita (${recipeVideos.length})` : 'Vídeos desta receita'}
+              </button>
             </div>
-          {showRecipeVideos && recipeVideos.length > 0 && (
+          {showRecipeVideos && (
             <section className="recipe-video-list" aria-label="Vídeos desta receita">
-              {recipeVideos.map((video) => (
+              {recipeVideos.length === 0 ? <p className="sub">Ainda não há vídeos publicados para esta receita.</p> : recipeVideos.map((video) => (
                 <article className="recipe-video-card" key={video.id}>
                   <VideoPlayer hlsUrl={video.hls_url} mp4Url={video.mp4_url} poster={video.thumbnail_url} title={video.title} />
                   <div className="recipe-video-copy">
