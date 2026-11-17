@@ -1,7 +1,7 @@
 'use client';
 
 import Script from 'next/script';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Play, Radio } from 'lucide-react';
 
 type HlsInstance = {
@@ -31,6 +31,20 @@ export function VideoPlayer({ hlsUrl, mp4Url, poster, title }: {
   const [notice, setNotice] = useState('');
   const activeUrl = source === 'hls' ? hlsUrl : mp4Url;
 
+  // Gumlet's hosted player avoids browser-specific HLS/MSE issues while still
+  // streaming the exact HLS asset configured in the admin form.
+  const gumletEmbedUrl = useMemo(() => {
+    if (!hlsUrl) return null;
+    try {
+      const url = new URL(hlsUrl);
+      if (url.protocol !== 'https:' || url.hostname !== 'video.gumlet.io') return null;
+      const match = url.pathname.match(/^\/[^/]+\/([^/]+)\/main\.m3u8$/);
+      return match ? `https://play.gumlet.io/embed/${match[1]}` : null;
+    } catch {
+      return null;
+    }
+  }, [hlsUrl]);
+
   useEffect(() => {
     setSource(hlsUrl ? 'hls' : 'mp4');
     setNotice('');
@@ -44,6 +58,9 @@ export function VideoPlayer({ hlsUrl, mp4Url, poster, title }: {
     media.pause();
     media.removeAttribute('src');
     media.load();
+
+    // For Gumlet assets, the official iframe player handles HLS internally.
+    if (source === 'hls' && gumletEmbedUrl) return;
 
     if (source === 'mp4') {
       media.src = activeUrl;
@@ -79,8 +96,8 @@ export function VideoPlayer({ hlsUrl, mp4Url, poster, title }: {
     }
 
     const player = new Hls();
-    player.loadSource(activeUrl);
     player.attachMedia(media);
+    player.loadSource(activeUrl);
     player.on(Hls.Events.ERROR, (_event, data) => {
       if (!data.fatal) return;
       player.destroy();
@@ -92,20 +109,42 @@ export function VideoPlayer({ hlsUrl, mp4Url, poster, title }: {
       }
     });
     return () => player.destroy();
-  }, [activeUrl, source, mp4Url, engineReady, engineFailed]);
+  }, [activeUrl, source, mp4Url, engineReady, engineFailed, gumletEmbedUrl]);
+
+  const useGumletEmbed = source === 'hls' && Boolean(gumletEmbedUrl);
 
   return (
     <div className="gumlet-player">
-      <Script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.15/dist/hls.min.js" strategy="afterInteractive" onReady={() => setEngineReady(true)} onError={() => setEngineFailed(true)} />
+      {!useGumletEmbed && source === 'hls' && <Script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.15/dist/hls.min.js" strategy="afterInteractive" onReady={() => setEngineReady(true)} onError={() => setEngineFailed(true)} />}
       <div className="gumlet-player-screen">
-        <video ref={videoRef} controls playsInline preload="metadata" poster={poster || undefined} aria-label={title} />
+        {useGumletEmbed ? (
+          <iframe
+            src={gumletEmbedUrl!}
+            title={title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            allowFullScreen
+            loading="lazy"
+          />
+        ) : (
+          <video
+            ref={videoRef}
+            controls
+            playsInline
+            preload="metadata"
+            poster={poster || undefined}
+            aria-label={title}
+            onError={() => {
+              if (source === 'mp4') setError('O Gumlet não conseguiu carregar a versão MP4. Confira se o processamento MP4 terminou e se a URL está correta.');
+            }}
+          />
+        )}
         {!activeUrl && <div className="gumlet-player-empty"><Play aria-hidden /><span>Adicione um link HLS ou MP4 para reproduzir.</span></div>}
       </div>
       <div className="gumlet-player-controls">
         <span className="gumlet-player-label"><Radio size={15} /> Player Gumlet</span>
         <div className="row">
-          {hlsUrl && <button type="button" className={source === 'hls' ? 'gumlet-source active' : 'gumlet-source'} onClick={() => { setNotice(''); setSource('hls'); }}>HLS</button>}
-          {mp4Url && <button type="button" className={source === 'mp4' ? 'gumlet-source active' : 'gumlet-source'} onClick={() => { setNotice(''); setSource('mp4'); }}>MP4</button>}
+          {hlsUrl && <button type="button" className={source === 'hls' ? 'gumlet-source active' : 'gumlet-source'} onClick={() => { setNotice(''); setError(''); setSource('hls'); }}>HLS</button>}
+          {mp4Url && <button type="button" className={source === 'mp4' ? 'gumlet-source active' : 'gumlet-source'} onClick={() => { setNotice(''); setError(''); setSource('mp4'); }}>MP4</button>}
         </div>
       </div>
       {notice && <p className="gumlet-player-notice">{notice}</p>}
