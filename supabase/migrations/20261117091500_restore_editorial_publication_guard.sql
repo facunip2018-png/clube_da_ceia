@@ -340,5 +340,4 @@ begin
   update public.source_documents set import_notes=concat_ws(E'\n',nullif(import_notes,''),'Leitura automática em '||to_char(now(),'YYYY-MM-DD HH24:MI')||': '||v_created||' receita(s) criada(s), '||v_skipped||' ignorada(s), '||v_materials||' material(is) de apoio.') where id=p_document_id;
   return jsonb_build_object('created',v_created,'skipped',v_skipped,'support_materials',v_materials,'published',false,'review_required',v_permission_ok,'status',case when v_permission_ok then 'review' else 'pending_permission' end);
 end;
-$function$
-
+$function$;
