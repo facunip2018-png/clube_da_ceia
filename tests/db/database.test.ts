@@ -507,3 +507,72 @@ describe('instalação pelo arquivo único', () => {
     }
   }, 60_000);
 });
+
+
+describe('proteção editorial adicional', () => {
+  it('retira para revisão quando o conteúdo de uma ficha publicada é alterado', async () => {
+    const [base] = await db.sql<{ collection_id: string }>(`select collection_id from public.recipes where id = $1`, [paveId]);
+    const [recipe] = await db.sql<{ id: string }>(
+      `insert into public.recipes (slug, collection_id, source_document_id, kind, title, content_state, status, position)
+       values ('teste-invalidacao-editorial', $1, $2, 'recipe', 'Teste de invalidação editorial', 'structured', 'draft', 9999)
+       returning id`,
+      [base.collection_id, paveDocId],
+    );
+    await db.sql(
+      `insert into public.recipe_ingredients (recipe_id, position, display_name, quantity, unit, original_text)
+       values ($1, 1, 'Leite', 1, 'g', '1 g de Leite')`,
+      [recipe.id],
+    );
+    await db.sql(
+      `insert into public.recipe_steps (recipe_id, position, instruction, original_text)
+       values ($1, 1, 'Misture.', 'Misture.')`,
+      [recipe.id],
+    );
+
+    await db.as('authenticated', admin, async (q) => {
+      await q(`update public.source_documents set commercial_permission = 'confirmed' where id = $1`, [paveDocId]);
+      await q(`update public.recipes set status = 'approved' where id = $1`, [recipe.id]);
+      await q(`update public.recipes set status = 'published' where id = $1`, [recipe.id]);
+      await q(`update public.recipe_ingredients set quantity = 2 where recipe_id = $1`, [recipe.id]);
+    });
+
+    const [after] = await db.sql<{ status: string; reviewed_at: string | null }>(
+      `select status, reviewed_at from public.recipes where id = $1`,
+      [recipe.id],
+    );
+    expect(after).toEqual({ status: 'review', reviewed_at: null });
+  });
+
+  it('a importação automática cria em revisão e não publica mesmo com permissão confirmada', async () => {
+    await db.sql(
+      `update public.source_documents
+          set file_status = 'stored', storage_path = 'test/automatic-import.pdf',
+              commercial_permission = 'confirmed'
+        where id = $1`,
+      [paveDocId],
+    );
+    const payload = {
+      collection: { name: 'Pavês', description: null },
+      recipes: [{
+        title: 'Receita importada em revisão',
+        source_page_start: 1,
+        source_page_end: 1,
+        ingredients: [{ display_name: 'Leite', quantity: 1, unit: 'g', original_text: '1 g de Leite', source_page: 1 }],
+        steps: [{ instruction: 'Misture.', original_text: 'Misture.', source_page: 1 }],
+      }],
+      support_materials: [],
+    };
+    const result = await db.as('authenticated', admin, async (q) => {
+      const [row] = await q<{ result: Record<string, unknown> }>(
+        `select public.admin_import_pdf_recipes($1, $2::jsonb) as result`,
+        [paveDocId, JSON.stringify(payload)],
+      );
+      return row.result;
+    });
+    expect(result).toMatchObject({ created: 1, published: false, review_required: true, status: 'review' });
+    const [imported] = await db.sql<{ status: string; reviewed_at: string | null }>(
+      `select status, reviewed_at from public.recipes where title = 'Receita importada em revisão'`,
+    );
+    expect(imported).toEqual({ status: 'review', reviewed_at: null });
+  });
+});
