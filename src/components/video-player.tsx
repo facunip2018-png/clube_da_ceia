@@ -32,6 +32,12 @@ export function VideoPlayer({ hlsUrl, mp4Url, poster, title }: {
   const activeUrl = source === 'hls' ? hlsUrl : mp4Url;
 
   useEffect(() => {
+    setSource(hlsUrl ? 'hls' : 'mp4');
+    setNotice('');
+    setError('');
+  }, [hlsUrl, mp4Url]);
+
+  useEffect(() => {
     const media = videoRef.current;
     if (!media || !activeUrl) return;
     setError('');

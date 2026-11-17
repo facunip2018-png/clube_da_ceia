@@ -33,7 +33,7 @@ const ACCOUNT: NavItem[] = [
   { href: '/perfil', label: 'Meu perfil', short: 'Perfil', icon: User },
 ];
 const ADMIN: NavItem = { href: '/admin', label: 'Painel admin', icon: Settings };
-const MOBILE = [SPACE[0], SPACE[1], SPACE[2], SPACE[4], ACCOUNT[1]];
+const MOBILE = [SPACE[0], SPACE[1], SPACE[3], SPACE[5], SPACE[2], ACCOUNT[1]];
 
 const isActive = (pathname: string, href: string) =>
   href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`) || (href === '/colecoes' && pathname.startsWith('/receitas'));

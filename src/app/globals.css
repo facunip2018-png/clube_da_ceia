@@ -531,10 +531,10 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; min-width
   .content { padding: 20px 16px calc(96px + var(--safe-bottom)); }
   .search { display: none; }
   .mobilenav {
-    position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-around; background: #fffefaf2; backdrop-filter: blur(14px);
+    position: fixed; bottom: 0; left: 0; right: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); justify-content: stretch; background: #fffefaf2; backdrop-filter: blur(14px);
     border-top: 1px solid var(--line); padding: 6px 4px calc(6px + var(--safe-bottom)); z-index: 30;
   }
-  .mobilenav a { color: #7d887f; display: grid; justify-items: center; gap: 2px; font-size: 11px; font-weight: 600; min-width: 62px; padding: 6px 4px; border-radius: 12px; position: relative; }
+  .mobilenav a { color: #7d887f; display: grid; justify-items: center; gap: 2px; font-size: 10px; font-weight: 600; min-width: 0; padding: 6px 1px; border-radius: 12px; position: relative; }
   .mobilenav a svg { width: 22px; height: 22px; }
   .mobilenav a.active { color: var(--forest); }
   .mobilenav a.active::before { content: ''; position: absolute; top: -7px; width: 26px; height: 3px; border-radius: 3px; background: var(--gold); }
