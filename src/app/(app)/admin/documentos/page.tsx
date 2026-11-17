@@ -53,12 +53,17 @@ function DocumentCard({ document, recipes, collection }: { document: SourceDocum
     setImporting(true);
     try {
       const response = await fetch(`/api/admin/documentos/${document.id}/importar`, { method: 'POST' });
-      const result = await response.json() as { error?: string; result?: { created?: number; skipped?: number; support_materials?: number; published?: boolean } };
+      const result = await response.json() as { error?: string; result?: { created?: number; skipped?: number; support_materials?: number; published?: boolean; status?: string; review_required?: boolean } };
       if (!response.ok) throw new Error(result.error || 'Não foi possível ler o PDF.');
       const created = result.result?.created ?? 0;
       const skipped = result.result?.skipped ?? 0;
       const materials = result.result?.support_materials ?? 0;
-      toast(`${created} receita(s) criada(s), ${materials} material(is) de apoio importado(s)${skipped ? `, ${skipped} ignorada(s) por falta de conteúdo ou duplicidade` : ''}.`);
+      const editorialNotice = result.result?.status === 'review'
+        ? '; as fichas novas ficaram em revisão, sem publicação automática'
+        : result.result?.status === 'pending_permission'
+          ? '; as fichas aguardam confirmação da permissão comercial'
+          : '';
+      toast(`${created} receita(s) criada(s), ${materials} material(is) de apoio importado(s)${skipped ? `, ${skipped} ignorada(s) por falta de conteúdo ou duplicidade` : ''}${editorialNotice}.`);
       window.location.reload();
     } catch (error) {
       fail(error);
