@@ -632,6 +632,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; min-width
 .gumlet-player { overflow:hidden; border:1px solid #e5e8e2; border-radius:15px; background:#101713; }
 .gumlet-player-screen { position:relative; aspect-ratio:16/9; background:#101713; }
 .gumlet-player-screen video { width:100%; height:100%; display:block; object-fit:contain; background:#101713; }
+.gumlet-player-screen iframe { width:100%; height:100%; display:block; border:0; background:#101713; }
 .gumlet-player-empty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:#dbe5db; font-size:13px; }
 .gumlet-player-empty svg { width:32px; height:32px; color:var(--gold); }
 .gumlet-player-controls { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 13px; color:#f3f4ee; }
