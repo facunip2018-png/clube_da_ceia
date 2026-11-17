@@ -94,6 +94,13 @@ export interface SupportMaterial extends Timestamps {
   is_visible: boolean;
 }
 
+export interface Video extends Timestamps {
+  id: string; slug: string; title: string; description: string | null;
+  hls_url: string | null; mp4_url: string | null; thumbnail_url: string | null;
+  duration_seconds: number | null; collection_id: string | null; recipe_id: string | null;
+  status: 'draft' | 'published' | 'archived'; position: number; created_by: string | null;
+}
+
 export interface Recipe extends Timestamps {
   id: string;
   slug: string;
@@ -493,6 +500,7 @@ export interface Tables {
   source_documents: SourceDocument;
   source_document_refs: SourceDocumentRef;
   support_materials: SupportMaterial;
+  videos: Video;
   recipes: Recipe;
   recipe_components: RecipeComponent;
   ingredients: Ingredient;

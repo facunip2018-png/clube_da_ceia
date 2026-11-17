@@ -28,11 +28,11 @@ const DB_KEY = 'ccp.demo.db.v1';
 const PREMIUM = new Set(['recipe_components', 'recipe_ingredients', 'recipe_steps', 'recipe_step_ingredients', 'recipe_step_timers', 'recipe_notes', 'recipe_compatibilities']);
 const PUBLIC = new Set(['seasons', 'collections', 'recipes', 'recipe_tags', 'challenges', 'source_document_refs']);
 const ADMIN_ONLY = new Set(['source_documents', 'review_flags', 'admin_audit_logs', 'payment_transactions']);
-const CATALOG = new Set(['seasons', 'collections', 'source_documents', 'recipes', 'recipe_components', 'ingredients', 'recipe_ingredients', 'recipe_steps', 'recipe_step_ingredients', 'recipe_step_timers', 'recipe_notes', 'recipe_tags', 'recipe_compatibilities', 'review_flags', 'challenges', 'support_materials']);
+const CATALOG = new Set(['seasons', 'collections', 'source_documents', 'recipes', 'recipe_components', 'ingredients', 'recipe_ingredients', 'recipe_steps', 'recipe_step_ingredients', 'recipe_step_timers', 'recipe_notes', 'recipe_tags', 'recipe_compatibilities', 'review_flags', 'challenges', 'support_materials', 'videos']);
 const OWNED = new Set(['recipe_favorites', 'meal_plans', 'plan_recipes', 'plan_tasks', 'shopping_lists', 'shopping_items', 'cooking_sessions', 'user_challenges', 'challenge_submissions', 'ai_conversations', 'ai_messages', 'orders', 'memberships']);
 const SERVER_WRITTEN = new Set(['user_challenges', 'orders', 'payment_transactions', 'admin_audit_logs']);
 const NEEDS_ACCESS = new Set(['meal_plans', 'cooking_sessions', 'ai_conversations', 'ai_messages']);
-const AUDITED = new Set(['collections', 'source_documents', 'recipes', 'seasons', 'challenges', 'memberships', 'review_flags']);
+const AUDITED = new Set(['collections', 'source_documents', 'recipes', 'seasons', 'challenges', 'memberships', 'review_flags', 'videos']);
 
 const PARENT: Record<string, [string, string]> = {
   plan_recipes: ['meal_plans', 'plan_id'],
@@ -64,6 +64,7 @@ const defaults = (table: string, now: string): Row => {
     case 'ai_messages': return { grounded_recipe_ids: [], model: null, tokens_in: null, tokens_out: null };
     case 'memberships': return { status: 'active', source: 'courtesy', order_id: null, granted_by: null, granted_at: now, revoked_at: null, revoke_reason: null, admin_locked: false, expires_at: null };
     case 'review_flags': return { recipe_id: null, source_document_id: null, entity_id: null, field: null, severity: 'warning', source_page: null, resolved_at: null, resolved_by: null, resolution_note: null };
+    case 'videos': return { description: null, hls_url: null, mp4_url: null, thumbnail_url: null, duration_seconds: null, collection_id: null, recipe_id: null, status: 'draft', position: 0, created_by: null };
     case 'recipe_ingredients': return { component_id: null, ingredient_id: null, position: 0, quantity: null, quantity_max: null, unit: null, quantity_text: null, preparation: null, household_note: null, scaling: 'linear', is_optional: false, original_text: null, source_page: null, needs_review: false };
     case 'recipe_steps': return { component_id: null, position: 0, original_text: null, tip: null, source_page: null, needs_review: false };
     default: return {};
@@ -177,6 +178,7 @@ export class LocalStore implements DataStore {
       case 'challenges': return admin || row.is_active;
       case 'source_document_refs': return true;
       case 'support_materials': return admin || (this.hasAccess() && row.is_visible);
+      case 'videos': return admin || (this.hasAccess() && row.status === 'published');
       case 'ingredients': return this.hasAccess();
       case 'profiles': return admin || row.id === this.userId;
       case 'challenge_submissions':

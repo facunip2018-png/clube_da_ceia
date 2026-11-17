@@ -12,6 +12,7 @@ const TABS = [
   { href: '/admin/catalogo', label: 'Categorias' },
   { href: '/admin/documentos', label: 'Materiais e direitos' },
   { href: '/admin/apoio', label: 'Materiais de apoio' },
+  { href: '/admin/videos', label: 'Vídeos Gumlet' },
   { href: '/admin/temporadas', label: 'Temporada' },
   { href: '/admin/acessos', label: 'Pessoas e pagamentos' },
   { href: '/admin/auditoria', label: 'Auditoria' },

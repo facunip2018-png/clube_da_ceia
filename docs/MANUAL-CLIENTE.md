@@ -45,6 +45,7 @@ A navegação pode aparecer em uma barra lateral ou na parte inferior da tela, d
 
 - **Início:** página inicial e destaques.
 - **Coleções:** receitas organizadas por assunto, como panetones e chocotones, tortas, pudins, pavês, rabanadas e manjares.
+- **Vídeos:** aulas e demonstrações em vídeo publicadas pelo Clube.
 - **Minha ceia:** receitas escolhidas para a ocasião.
 - **Lista de compras:** ingredientes reunidos para facilitar as compras.
 - **Chef:** espaço para tirar dúvidas sobre receitas.
@@ -194,7 +195,18 @@ Não use um tempo sugerido pelo aparelho como substituto de uma instrução ause
 
 O cronograma utiliza os tempos registrados nas fichas. Ele não substitui sua avaliação sobre espaço, equipamentos ou tarefas que não estejam descritas.
 
-## 14. Problemas comuns
+## 14. Assistir aos vídeos do Clube
+
+1. Entre na sua conta com acesso ativo à temporada.
+2. Abra **Vídeos** na navegação do Clube.
+3. Escolha a aula ou demonstração disponível.
+4. Toque no botão de reprodução do player.
+5. Use os controles para pausar, retomar, ajustar o volume e assistir em tela cheia.
+6. Se aparecer a opção de formato, escolha HLS ou MP4. O player também pode selecionar automaticamente a alternativa compatível com o navegador.
+
+Os vídeos publicados são disponibilizados pela biblioteca do Clube. A reprodução depende de conexão com a internet e da disponibilidade do vídeo no serviço Gumlet. Se o vídeo não iniciar, atualize a página e tente novamente. Se continuar, informe ao suporte o título do vídeo e o aparelho/navegador utilizado.
+
+## 15. Problemas comuns
 
 **Não consigo entrar**
 - Confira e-mail e senha.
@@ -225,7 +237,7 @@ O cronograma utiliza os tempos registrados nas fichas. Ele não substitui sua av
 **Não encontro o PDF original**
 - O acesso ao PDF original depende de liberação específica para assinantes e da permissão de uso daquele material. A ficha publicada no aplicativo continua sendo o local de consulta das instruções.
 
-## 15. Segurança e boas práticas
+## 16. Segurança e boas práticas
 
 - Não compartilhe sua senha.
 - Use o e-mail correto da compra.

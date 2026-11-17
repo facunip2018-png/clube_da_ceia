@@ -19,7 +19,7 @@ Este é o guia operacional para manter o Clube funcionando. Ele separa o que já
 | Mercado Pago | Checkout e confirmação de pagamentos | Checkout Pro e webhook implementados; operação real precisa de validação |
 | OpenRouter/Kimi | IA utilizada no fluxo administrativo de leitura/importação de documentos | Chave cadastrada no cofre do Supabase |
 | Chef | Respostas sobre receitas publicadas | Rota de servidor implementada; IA generativa depende do provedor configurado |
-| Gumlet | Hospedagem e reprodução de vídeos | Biblioteca administrativa e player no aplicativo ainda precisam ser implementados/confirmados |
+| Gumlet | Hospedagem e reprodução de vídeos | Biblioteca administrativa, player HLS/MP4 e publicação implementados; falta testar os ativos reais e revisar privacidade no Gumlet |
 
 ## 2. O que já foi construído
 
@@ -199,7 +199,9 @@ A página de retorno do checkout não prova que houve pagamento. A liberação d
 ## 7. Gumlet — vídeos e player
 
 ### 7.1 Situação atual
-Ainda é necessário criar/confirmar uma área administrativa para cadastrar vídeos Gumlet e um player integrado ao aplicativo.
+A biblioteca de vídeos foi implementada no painel em **Painel admin → Vídeos Gumlet**. Há um botão grande e destacado na visão geral do painel para abrir essa área. O cadastro fica no Supabase e o player aparece na área **Vídeos** do assinante.
+
+O primeiro registro foi criado como **rascunho**, com o link HLS que você forneceu. Ele não fica visível aos assinantes até ser publicado.
 
 O link fornecido é uma URL HLS (.m3u8):
 
@@ -222,16 +224,15 @@ Campos recomendados:
 - Situação: rascunho ou publicado.
 - Visibilidade: todos os assinantes autorizados ou somente uma coleção/receita.
 
-Fluxo administrativo desejado:
+Fluxo administrativo implementado:
 1. Abrir **Painel admin → Vídeos**.
 2. Cadastrar título e descrição.
 3. Colar a URL HLS.
-4. Opcionalmente cadastrar URL MP4.
+4. Opcionalmente cadastrar URL MP4 e imagem de capa.
 5. Associar o vídeo a uma coleção ou receita.
-6. Definir a visibilidade.
-7. Salvar como rascunho.
-8. Testar em celular e computador.
-9. Publicar.
+6. Escolher rascunho, publicado ou arquivado.
+7. Conferir a prévia do player ao lado do formulário.
+8. Salvar. Ao publicar, o vídeo fica visível somente a assinantes com acesso ativo.
 
 Fluxo do cliente:
 1. Entrar com conta com acesso válido.
@@ -254,14 +255,11 @@ Fluxo do cliente:
 - Não considerar um vídeo privado apenas porque o link não foi divulgado.
 
 Pendências Gumlet:
-- [ ] Confirmar privacidade e entrega do workspace.
-- [ ] Decidir se vídeos serão exclusivos de assinantes.
-- [ ] Criar módulo de cadastro no painel.
-- [ ] Implementar player HLS compatível.
-- [ ] Implementar URL MP4 alternativa, se habilitada.
-- [ ] Testar Android, iPhone, Chrome e Safari.
-- [ ] Testar bloqueio de usuário sem acesso.
-- [ ] Testar vídeo em rascunho, publicado e indisponível.
+- [ ] Confirmar no painel Gumlet se os ativos e URLs HLS/MP4 estão liberados para reprodução no domínio do Clube.
+- [ ] Conferir a privacidade dos ativos e configurar proteção/tokenização no Gumlet se necessário.
+- [ ] Habilitar MP4 nas configurações de processamento do Gumlet para os vídeos em que desejar essa alternativa.
+- [ ] Testar reprodução real em Android, iPhone, Chrome e Safari.
+- [ ] Testar bloqueio de usuário sem acesso e confirmar que o link direto não contorna a proteção do Gumlet.
 
 ## 8. Chef e leitura de documentos
 
@@ -373,8 +371,8 @@ Não prometa envio instantâneo sem validar o provedor e seus limites.
 | Temporada e preço | Campos e fluxo administrativo existentes | Definir preço e datas |
 | E-mail transacional | Autenticação implementada | Configurar SMTP e testar ponta a ponta |
 | Download do PDF original pelo assinante | Não confirmado; documentação atual registra acesso administrativo aos originais | Decidir política e implementar acesso seguro se desejado |
-| Biblioteca de vídeos Gumlet | Ainda precisa de implementação/validação | Criar módulo de cadastro e player |
-| Player HLS/MP4 Gumlet | Não confirmado como implementado | Implementar e testar compatibilidade |
+| Biblioteca de vídeos Gumlet | Implementada no painel e no espaço do assinante | Testar os ativos reais e revisar privacidade no Gumlet |
+| Player HLS/MP4 Gumlet | Implementado com HLS.js e alternativa MP4 | Testar nos aparelhos e navegadores reais |
 | Compra real de ponta a ponta | Não comprovada no último relatório consultado | Testar com credenciais de teste |
 | Manual do cliente | Criado neste conjunto de documentação | Atualizar quando os fluxos mudarem |
 | Manual do administrador | Este documento | Atualizar quando integrações mudarem |
@@ -399,8 +397,9 @@ Não prometa envio instantâneo sem validar o provedor e seus limites.
 3. Configurar e testar Mercado Pago, incluindo webhook, aprovação e estorno.
 4. Revisar permissões comerciais e fichas que serão oferecidas.
 5. Decidir a política de download dos PDFs originais para assinantes.
-6. Implementar módulo administrativo de vídeos e player Gumlet (HLS e MP4 opcional).
-7. Fazer testes ponta a ponta com conta de cliente em computador e celular.
-8. Abrir as vendas somente depois da conferência.
+6. Configurar privacidade e, se necessário, MP4 no painel Gumlet.
+7. Testar o player com o vídeo cadastrado em computador e celular.
+8. Fazer testes ponta a ponta com conta de cliente.
+9. Abrir as vendas somente depois da conferência.
 
 **Princípio final:** toda mudança deve preservar usuários, assinaturas, receitas, permissões e dados existentes. Antes de alterar banco, autenticação ou pagamento, inspecione o estado atual, faça backup quando aplicável, implemente a menor mudança necessária e teste o resultado.

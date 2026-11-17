@@ -600,3 +600,47 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; min-width
   .content { padding: 0; }
   body { background: #fff; }
 }
+
+
+/* ---------- biblioteca de vídeos Gumlet ---------- */
+.admin-video-cta { display:flex; align-items:center; gap:18px; padding:22px 24px; margin:18px 0 6px; border-radius:20px; color:#fff; background:linear-gradient(115deg,#173d2c 0%,#24543d 68%,#8a6c30 140%); box-shadow:0 14px 32px rgba(23,61,44,.18); transition:transform .2s,box-shadow .2s; }
+.admin-video-cta:hover { transform:translateY(-2px); box-shadow:0 18px 38px rgba(23,61,44,.24); }
+.admin-video-cta-icon { width:58px; height:58px; flex:none; display:grid; place-items:center; border-radius:17px; color:#1b3829; background:var(--gold); }
+.admin-video-cta-icon svg { width:30px; height:30px; }
+.admin-video-cta-copy { display:grid; gap:3px; min-width:0; flex:1; }
+.admin-video-cta-copy .eyebrow { color:#e7d5a6; }
+.admin-video-cta-copy strong { font:500 24px/1.2 var(--font-serif); }
+.admin-video-cta-copy > span:last-child { color:#e1e9e1; font-size:13.5px; }
+.admin-video-cta-action { color:#f1d99c; font-size:13px; font-weight:800; white-space:nowrap; }
+.admin-video-banner { display:flex; align-items:center; gap:18px; padding:22px; margin-bottom:18px; border:1px solid #d9e4d8; border-radius:18px; background:linear-gradient(110deg,#eef4eb,#fffaf0); }
+.admin-video-banner-icon { width:60px; height:60px; display:grid; place-items:center; flex:none; color:#fff; background:var(--forest); border-radius:18px; }
+.admin-video-banner-icon svg { width:29px; height:29px; }
+.admin-video-banner h2 { margin:5px 0; }
+.admin-video-banner p { color:var(--muted); font-size:13.5px; max-width:760px; }
+.video-admin-list { display:grid; gap:8px; }
+.video-admin-row { display:flex; align-items:center; gap:12px; padding:11px 0; border-bottom:1px solid var(--line); }
+.video-admin-row:last-child { border-bottom:0; }
+.video-admin-row .grow { display:grid; gap:6px; }
+.video-admin-row strong { font-size:13.5px; }
+.video-admin-thumb { width:44px; height:44px; flex:none; display:grid; place-items:center; color:var(--forest); background:#edf1e9; border-radius:12px; }
+.video-admin-thumb svg { width:21px; height:21px; }
+.video-library-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
+.video-library-card { overflow:hidden; border:1px solid var(--line); border-radius:18px; background:#fff; box-shadow:0 8px 26px rgba(25,49,34,.04); }
+.video-library-copy { display:grid; gap:9px; padding:18px; }
+.video-library-copy .eyebrow { display:flex; align-items:center; gap:6px; }
+.video-library-copy h2 { font-size:22px; }
+.gumlet-player { overflow:hidden; border:1px solid #e5e8e2; border-radius:15px; background:#101713; }
+.gumlet-player-screen { position:relative; aspect-ratio:16/9; background:#101713; }
+.gumlet-player-screen video { width:100%; height:100%; display:block; object-fit:contain; background:#101713; }
+.gumlet-player-empty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:#dbe5db; font-size:13px; }
+.gumlet-player-empty svg { width:32px; height:32px; color:var(--gold); }
+.gumlet-player-controls { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 13px; color:#f3f4ee; }
+.gumlet-player-label { display:inline-flex; align-items:center; gap:7px; color:#d7dfd5; font-size:12px; font-weight:700; }
+.gumlet-source { border:1px solid #ffffff40; border-radius:999px; padding:5px 11px; color:#e8eee7; background:transparent; font-size:11px; font-weight:800; }
+.gumlet-source.active { color:#243628; border-color:var(--gold); background:var(--gold); }
+.gumlet-player-notice,.gumlet-player-error { display:flex; align-items:flex-start; gap:7px; padding:9px 12px; font-size:12px; line-height:1.5; }
+.gumlet-player-notice { color:#f3e5bd; background:#463b22; }
+.gumlet-player-error { color:#ffe1db; background:#5c2822; }
+.gumlet-player-error svg { flex:none; margin-top:1px; }
+@media(max-width:900px) { .video-library-grid{grid-template-columns:1fr}.admin-video-cta{align-items:flex-start;flex-wrap:wrap}.admin-video-cta-action{margin-left:76px} }
+@media(max-width:560px) { .admin-video-cta{padding:17px;gap:12px}.admin-video-cta-icon{width:48px;height:48px;border-radius:14px}.admin-video-cta-copy strong{font-size:20px}.admin-video-banner{align-items:flex-start;padding:16px}.admin-video-banner-icon{width:48px;height:48px}.video-admin-row{align-items:flex-start}.video-admin-row > .row{flex-wrap:nowrap} }

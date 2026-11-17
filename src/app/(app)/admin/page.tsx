@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useTable } from '@/data/hooks';
 import { useSession } from '@/data/session';
+import { Video as VideoIcon } from 'lucide-react';
 import { Loading, Notice, PageHead } from '@/components/ui';
 
 export default function AdminHome() {
@@ -23,6 +24,11 @@ export default function AdminHome() {
         <div className="adminstat"><span className="eyebrow">Receitas cadastradas</span><strong>{recipes.length}</strong></div>
         <div className="adminstat"><span className="eyebrow">Receitas no ar</span><strong>{published}</strong><span className="sub small">{structured} com ficha estruturada</span></div>
       </div>
+      <Link href="/admin/videos" className="admin-video-cta">
+        <span className="admin-video-cta-icon"><VideoIcon aria-hidden /></span>
+        <span className="admin-video-cta-copy"><span className="eyebrow">Novo espaço de conteúdo</span><strong>Biblioteca de vídeos Gumlet</strong><span>Cadastre, organize e publique aulas com player HLS e MP4.</span></span>
+        <span className="admin-video-cta-action">Gerenciar vídeos →</span>
+      </Link>
       <div className="twocol" style={{ marginTop: 18 }}>
         <Link href="/admin/catalogo" className="panel">
           <div className="eyebrow">Organização</div>
