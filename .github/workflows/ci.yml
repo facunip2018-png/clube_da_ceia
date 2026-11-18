@@ -22,7 +22,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Instalar dependências
-        run: npm ci
+        run: npm install --no-audit --no-fund
       - name: Verificar TypeScript
         run: npm run typecheck
       - name: Executar testes automatizados
