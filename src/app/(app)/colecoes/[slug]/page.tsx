@@ -31,7 +31,13 @@ export default function CollectionPage() {
   const { rows: documents } = useTable('source_documents', access.is_admin && collection ? { eq: { collection_id: collection.id } } : null);
   const isBuilder = collection?.experience === 'builder';
   const recipeIds = useMemo(() => (summary?.recipes ?? []).map((r) => r.id), [summary]);
-  const { rows: compatibilities } = useTable('recipe_compatibilities', isBuilder && user && access.has_access && recipeIds.length ? { in: { recipe_id: recipeIds } } : null);
+  const compatibilityQuery = isBuilder && user && access.has_access && recipeIds.length
+    ? {
+        in: { recipe_id: recipeIds },
+        ...(access.is_admin ? {} : { eq: { verified: true } }),
+      }
+    : null;
+  const { rows: compatibilities } = useTable('recipe_compatibilities', compatibilityQuery);
 
   const recipes = useMemo(() => {
     const term = normalizeText(q);

@@ -1,5 +1,5 @@
 /**
- * Fluxo editorial simplificado: receitas completas podem ser disponibilizadas diretamente.
+ * Regras editoriais compartilhadas pelo painel e pelo armazenamento local de demonstração.
  */
 import type { Recipe, RecipeStatus } from './types';
 
@@ -20,11 +20,31 @@ export interface TransitionContext {
 
 export function checkRecipeTransition(recipe: Recipe, next: RecipeStatus, ctx: TransitionContext): Partial<Recipe> {
   const patch: Partial<Recipe> = { status: next };
-  if (next === 'published') patch.published_at = recipe.published_at ?? ctx.now;
+
+  if (next === 'approved' || next === 'published') {
+    if (recipe.content_state !== 'structured') {
+      throw new AppError('CONTENT_REQUIRED', 'Estruture ingredientes e etapas antes de disponibilizar a receita.');
+    }
+    if (ctx.openFlags > 0) {
+      throw new AppError('FLAGS_PENDING', 'Resolva os apontamentos de revisão antes de disponibilizar a receita.');
+    }
+  }
+
   if (next === 'approved') {
     patch.reviewed_at = ctx.now;
     patch.reviewed_by = ctx.userId ?? recipe.reviewed_by;
   }
+
+  if (next === 'published') {
+    if (ctx.permission !== 'confirmed') {
+      throw new AppError('PERMISSION_REQUIRED', 'Confirme a permissão comercial da fonte antes de disponibilizar a receita.');
+    }
+    if (ctx.linkedUnpublished > 0) {
+      throw new AppError('LINKED_COMPONENT_UNPUBLISHED', 'Publique os componentes vinculados antes de disponibilizar a receita.');
+    }
+    patch.published_at = recipe.published_at ?? ctx.now;
+  }
+
   return patch;
 }
 
@@ -70,4 +90,8 @@ const FRIENDLY: Record<string, string> = {
   FORBIDDEN: 'Você não tem permissão para esta ação.',
   NOT_AUTHENTICATED: 'Entre na sua conta para continuar.',
   ACCESS_REQUIRED: 'Este recurso faz parte do acesso da temporada.',
+  CONTENT_REQUIRED: 'Estruture ingredientes e etapas antes de disponibilizar a receita.',
+  FLAGS_PENDING: 'Resolva os apontamentos de revisão antes de disponibilizar a receita.',
+  PERMISSION_REQUIRED: 'Confirme a permissão comercial da fonte antes de disponibilizar a receita.',
+  LINKED_COMPONENT_UNPUBLISHED: 'Publique os componentes vinculados antes de disponibilizar a receita.',
 };
