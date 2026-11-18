@@ -29,11 +29,11 @@ afterAll(async () => {
 });
 
 describe('estrutura e carga', () => {
-  it('cria as 31 tabelas, todas com RLS ligado', async () => {
+  it('cria as 34 tabelas, todas com RLS ligado', async () => {
     const rows = await db.sql<{ tablename: string; rowsecurity: boolean }>(
       `select tablename, rowsecurity from pg_tables where schemaname = 'public'`,
     );
-    expect(rows).toHaveLength(31);
+    expect(rows).toHaveLength(34);
     expect(rows.filter((r) => !r.rowsecurity)).toEqual([]);
   });
 
@@ -128,8 +128,20 @@ describe('fluxo editorial e permissão comercial', () => {
 
   it('não aprova nem publica item sem ficha estruturada', async () => {
     await db.as('authenticated', admin, async (q) => {
-      const message = await errorOf(q(`update public.recipes set status = 'approved' where slug = 'panetone-tradicional'`));
+      const [incomplete] = await q<{ id: string }>(
+        `select id from public.recipes where content_state <> 'structured' order by position, id limit 1`,
+      );
+      expect(incomplete).toBeTruthy();
+      const message = await errorOf(q(
+        `update public.recipes set status = 'approved' where id = $1`,
+        [incomplete.id],
+      ));
       expect(message).toContain('CONTENT_REQUIRED');
+      const publishMessage = await errorOf(q(
+        `update public.recipes set status = 'published' where id = $1`,
+        [incomplete.id],
+      ));
+      expect(publishMessage).toContain('CONTENT_REQUIRED');
     });
   });
 
@@ -462,7 +474,7 @@ describe('pagamentos', () => {
 });
 
 describe('storage', () => {
-  it('PDFs originais ficam em bucket privado, acessível apenas a administradores', async () => {
+  it('PDFs originais ficam em bucket privado, com leitura restrita a administradores e assinantes ativos', async () => {
     const buckets = await db.sql<{ id: string; public: boolean }>(`select id, public from storage.buckets order by id`);
     expect(buckets).toEqual([
       { id: 'challenge-photos', public: false },
@@ -474,7 +486,11 @@ describe('storage', () => {
       expect(await q(`select id from storage.objects where bucket_id = 'source-documents'`)).toHaveLength(1);
     });
     await db.as('authenticated', ana, async (q) => {
-      expect(await q(`select id from storage.objects where bucket_id = 'source-documents'`)).toHaveLength(0);
+      const [access] = await q<{ has_access: boolean }>(
+        `select (public.my_access() ->> 'has_access')::boolean as has_access`,
+      );
+      expect(access.has_access).toBe(true);
+      expect(await q(`select id from storage.objects where bucket_id = 'source-documents'`)).toHaveLength(1);
       expect(await errorOf(q(`insert into storage.objects (bucket_id, name) values ('source-documents', 'x.pdf')`))).toMatch(/row-level security/i);
       // fotos: só na própria pasta
       await q(`insert into storage.objects (bucket_id, name) values ('challenge-photos', $1)`, [`${ana}/pave.jpg`]);
@@ -498,7 +514,7 @@ describe('instalação pelo arquivo único', () => {
       expect(await count(single, 'recipes')).toBe(62);
       expect(await count(single, 'recipe_steps')).toBe(449);
       const [{ n }] = await single.sql<{ n: number }>(`select count(*)::int as n from pg_tables where schemaname = 'public' and rowsecurity`);
-      expect(n).toBe(31);
+      expect(n).toBe(34);
       const [{ policies }] = await single.sql<{ policies: number }>(`select count(*)::int as policies from pg_policies where schemaname in ('public', 'storage')`);
       const [{ expected }] = await db.sql<{ expected: number }>(`select count(*)::int as expected from pg_policies where schemaname in ('public', 'storage')`);
       expect(policies).toBe(expected);

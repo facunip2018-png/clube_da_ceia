@@ -1,5 +1,6 @@
 /**
- * Fluxo editorial simplificado: receitas completas podem ser disponibilizadas diretamente.
+ * Fluxo editorial da ficha: rascunho → revisão humana → aprovação → publicação.
+ * As mesmas pré-condições são reforçadas pelo gatilho do PostgreSQL em produção.
  */
 import type { Recipe, RecipeStatus } from './types';
 
@@ -19,12 +20,36 @@ export interface TransitionContext {
 }
 
 export function checkRecipeTransition(recipe: Recipe, next: RecipeStatus, ctx: TransitionContext): Partial<Recipe> {
+  if (recipe.status === next) return {};
+
   const patch: Partial<Recipe> = { status: next };
-  if (next === 'published') patch.published_at = recipe.published_at ?? ctx.now;
+  const needsEditorialReview = next === 'approved' || next === 'published';
+
+  if (needsEditorialReview && recipe.content_state !== 'structured') {
+    throw new AppError('CONTENT_REQUIRED', 'A ficha precisa estar estruturada com ingredientes e modo de preparo.');
+  }
+  if (needsEditorialReview && ctx.openFlags > 0) {
+    throw new AppError('FLAGS_PENDING', 'Existem pontos de revisão em aberto nesta ficha.');
+  }
+
   if (next === 'approved') {
     patch.reviewed_at = ctx.now;
     patch.reviewed_by = ctx.userId ?? recipe.reviewed_by;
   }
+
+  if (next === 'published') {
+    if (!recipe.reviewed_at) {
+      throw new AppError('APPROVAL_REQUIRED', 'A ficha precisa passar pela aprovação humana antes da publicação.');
+    }
+    if (ctx.permission !== 'confirmed') {
+      throw new AppError('PERMISSION_REQUIRED', 'Confirme a permissão comercial do documento original antes da publicação.');
+    }
+    if (ctx.linkedUnpublished > 0) {
+      throw new AppError('LINKED_COMPONENT_UNPUBLISHED', 'Publique primeiro os componentes compartilhados desta ficha.');
+    }
+    patch.published_at = recipe.published_at ?? ctx.now;
+  }
+
   return patch;
 }
 
@@ -37,13 +62,15 @@ export interface StatusAction {
 export function statusActions(status: RecipeStatus): StatusAction[] {
   switch (status) {
     case 'draft':
+      return [{ to: 'review', label: 'Enviar para revisão', tone: 'default' }, { to: 'archived', label: 'Arquivar', tone: 'default' }];
     case 'review':
+      return [{ to: 'approved', label: 'Aprovar ficha', tone: 'primary' }, { to: 'archived', label: 'Arquivar', tone: 'default' }];
     case 'approved':
       return [{ to: 'published', label: 'Disponibilizar aos assinantes', tone: 'primary' }, { to: 'archived', label: 'Arquivar', tone: 'default' }];
     case 'published':
       return [{ to: 'archived', label: 'Retirar da biblioteca', tone: 'danger' }];
     case 'archived':
-      return [{ to: 'published', label: 'Disponibilizar aos assinantes', tone: 'primary' }];
+      return [{ to: 'review', label: 'Reabrir para revisão', tone: 'default' }];
     default:
       return [];
   }
