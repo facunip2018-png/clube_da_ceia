@@ -31,8 +31,9 @@ export default function CollectionPage() {
   const { rows: documents } = useTable('source_documents', access.is_admin && collection ? { eq: { collection_id: collection.id } } : null);
   const isBuilder = collection?.experience === 'builder';
   const recipeIds = useMemo(() => (summary?.recipes ?? []).map((r) => r.id), [summary]);
-  const { rows: compatibilities } = useTable('recipe_compatibilities', isBuilder && user && access.has_access && recipeIds.length ? { in: { recipe_id: recipeIds } } : null);
-  const { rows: componentLinks } = useTable('recipe_components', isBuilder && user && access.has_access && recipeIds.length ? { in: { recipe_id: recipeIds } } : null);
+  const canReadBuilder = Boolean(user && (access.is_admin || access.has_access));
+  const { rows: compatibilities } = useTable('recipe_compatibilities', isBuilder && canReadBuilder && recipeIds.length ? { in: { recipe_id: recipeIds } } : null);
+  const { rows: componentLinks } = useTable('recipe_components', isBuilder && canReadBuilder && recipeIds.length ? { in: { recipe_id: recipeIds } } : null);
 
   const recipes = useMemo(() => {
     const term = normalizeText(q);
