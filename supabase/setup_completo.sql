@@ -866,6 +866,13 @@ end $$;
 -- Não muda o status das receitas existentes, não atualiza conteúdo e não
 -- modifica autenticação, RLS, permissões ou Storage.
 
+-- Restaura a proteção editorial que foi removida pela migração
+-- 20261112000000_simplify_recipe_publication.sql.
+--
+-- Para fichas compostas, ingredientes, etapas e alertas podem estar nas
+-- receitas-componentes vinculadas, sem linhas diretas na receita principal.
+-- Esta função considera ambos os formatos, sem alterar registros existentes.
+
 create or replace function public.guard_recipe_status()
 returns trigger
 language plpgsql
@@ -889,12 +896,26 @@ begin
   if new.status in ('approved', 'published') then
     if new.content_state is distinct from 'structured'
       or not exists (
-        select 1 from public.recipe_ingredients i
+        select 1
+        from public.recipe_ingredients i
         where i.recipe_id = new.id
+           or exists (
+             select 1
+             from public.recipe_components rc
+             where rc.recipe_id = new.id
+               and rc.linked_recipe_id = i.recipe_id
+           )
       )
       or not exists (
-        select 1 from public.recipe_steps s
+        select 1
+        from public.recipe_steps s
         where s.recipe_id = new.id
+           or exists (
+             select 1
+             from public.recipe_components rc
+             where rc.recipe_id = new.id
+               and rc.linked_recipe_id = s.recipe_id
+           )
       )
     then
       raise exception 'CONTENT_REQUIRED: a receita precisa ter uma ficha estruturada, com ingredientes e modo de preparo.'
@@ -904,11 +925,19 @@ begin
     if exists (
       select 1
       from public.review_flags f
-      where f.recipe_id = new.id
-        and f.resolved_at is null
+      where f.resolved_at is null
         and f.severity in ('warning', 'blocker')
+        and (
+          f.recipe_id = new.id
+          or exists (
+            select 1
+            from public.recipe_components rc
+            where rc.recipe_id = new.id
+              and rc.linked_recipe_id = f.recipe_id
+          )
+        )
     ) then
-      raise exception 'FLAGS_PENDING: existem pontos de revisão em aberto nesta ficha.'
+      raise exception 'FLAGS_PENDING: existem pontos de revisão em aberto nesta ficha ou em seus componentes vinculados.'
         using errcode = 'P0001';
     end if;
   end if;
@@ -920,7 +949,7 @@ begin
 
   if new.status = 'published' then
     if new.reviewed_at is null then
-      raise exception 'APPROVAL_REQUIRED: a ficha precisa ser aprovada na revisão antes de ser publicada.'
+      raise exception 'APPROVAL_REQUIRED: a ficha precisa passar pela aprovação humana antes da publicação.'
         using errcode = 'P0001';
     end if;
 
