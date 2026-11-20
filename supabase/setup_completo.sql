@@ -1,9 +1,10 @@
 -- =====================================================================
 -- Clube da Ceia Perfeita — instalação completa do banco (GERADO)
 -- Cole este arquivo inteiro no SQL Editor do Supabase de um projeto NOVO e execute uma vez.
--- Conteúdo: 24 migrations + carga inicial (supabase/seed.sql).
+-- Conteúdo: 29 migrations + carga inicial (supabase/seed.sql).
 -- Para projetos que já rodaram as migrations, execute apenas supabase/seed.sql.
 -- =====================================================================
+
 
 
 
@@ -5345,6 +5346,93 @@ where r.slug='manjar-de-nutella'
 and not exists(select 1 from public.recipe_steps s where s.component_id=c.id);
 commit;
 
+-- >>>>>>>>>> migrations/20261117125809_create_video_library.sql
+-- Biblioteca de vídeos Gumlet do Clube da Ceia Perfeita.
+-- Vídeos publicados são visíveis somente para assinantes com acesso ativo; CRUD é exclusivo de administradores.
+begin;
+create table if not exists public.videos (
+  id uuid primary key default gen_random_uuid(),
+  slug text not null unique,
+  title text not null check (char_length(btrim(title)) between 2 and 160),
+  description text,
+  hls_url text,
+  mp4_url text,
+  thumbnail_url text,
+  duration_seconds integer check (duration_seconds is null or duration_seconds > 0),
+  collection_id uuid references public.collections(id) on delete set null,
+  recipe_id uuid references public.recipes(id) on delete set null,
+  status text not null default 'draft' check (status in ('draft', 'published', 'archived')),
+  position integer not null default 0,
+  created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint videos_has_source check (hls_url is not null or mp4_url is not null),
+  constraint videos_hls_https check (hls_url is null or hls_url ~* '^https://'),
+  constraint videos_mp4_https check (mp4_url is null or mp4_url ~* '^https://'),
+  constraint videos_thumbnail_https check (thumbnail_url is null or thumbnail_url ~* '^https://')
+);
+create index if not exists videos_status_position_idx on public.videos(status, position);
+create index if not exists videos_collection_idx on public.videos(collection_id);
+create index if not exists videos_recipe_idx on public.videos(recipe_id);
+drop trigger if exists set_updated_at on public.videos;
+create trigger set_updated_at before update on public.videos
+  for each row execute function public.set_updated_at();
+alter table public.videos enable row level security;
+revoke all on public.videos from anon, authenticated;
+grant select, insert, update, delete on public.videos to authenticated;
+drop policy if exists "administradores gerenciam videos" on public.videos;
+create policy "administradores gerenciam videos" on public.videos
+  for all to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
+drop policy if exists "assinantes assistem videos publicados" on public.videos;
+create policy "assinantes assistem videos publicados" on public.videos
+  for select to authenticated using (status = 'published' and (select public.has_active_access()));
+insert into public.videos (slug, title, description, hls_url, status, position)
+values ('video-gumlet-demo','Vídeo de demonstração Gumlet','Vídeo inicial fornecido para configurar e testar o player. Revise o título e publique quando estiver pronto.','https://video.gumlet.io/6ad7bb851ab4445ed4e7f416/6ad7c30a1ab4445ed4e82f97/main.m3u8','draft',1)
+on conflict (slug) do nothing;
+commit;
+
+-- >>>>>>>>>> migrations/20261117130443_audit_video_library.sql
+-- Registra no histórico administrativo inclusões, alterações e arquivamentos da biblioteca de vídeos.
+create or replace function public.audit_video_changes()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' then
+    perform public.write_audit_log('videos.created', 'videos', new.id::text, new.title, null, to_jsonb(new));
+    return new;
+  elsif tg_op = 'UPDATE' then
+    perform public.write_audit_log('videos.updated', 'videos', new.id::text, new.title, to_jsonb(old), to_jsonb(new));
+    return new;
+  elsif tg_op = 'DELETE' then
+    perform public.write_audit_log('videos.deleted', 'videos', old.id::text, old.title, to_jsonb(old), null);
+    return old;
+  end if;
+  return null;
+end;
+$$;
+revoke all on function public.audit_video_changes() from public, anon, authenticated;
+drop trigger if exists audit_video_changes on public.videos;
+create trigger audit_video_changes after insert or update or delete on public.videos
+for each row execute function public.audit_video_changes();
+
+-- >>>>>>>>>> migrations/20261117130905_refine_video_rls_and_indexes.sql
+-- Consolida a política de leitura da biblioteca e indexa a chave estrangeira do criador.
+drop policy if exists "administradores gerenciam videos" on public.videos;
+drop policy if exists "assinantes assistem videos publicados" on public.videos;
+create policy "videos para administradores ou assinantes ativos" on public.videos
+for select to authenticated
+using ((select public.is_admin()) or (status = 'published' and (select public.has_active_access())));
+create policy "administradores inserem videos" on public.videos
+for insert to authenticated with check ((select public.is_admin()));
+create policy "administradores atualizam videos" on public.videos
+for update to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
+create policy "administradores removem videos" on public.videos
+for delete to authenticated using ((select public.is_admin()));
+create index if not exists videos_created_by_idx on public.videos(created_by);
+
 -- >>>>>>>>>> migrations/20261118125500_pdf_import_requires_human_review.sql
 -- Novas receitas importadas por IA nunca entram diretamente publicadas.
 -- Com permissão comercial confirmada, aguardam revisão humana; sem permissão,
@@ -5508,6 +5596,220 @@ begin
   return jsonb_build_object('created',v_created,'skipped',v_skipped,'support_materials',v_materials,'published',false,'pending_review',v_permission_ok,'permission_confirmed',v_permission_ok);
 end;
 $function$
+
+-- >>>>>>>>>> migrations/20261118130000_restore_editorial_publication_guard.sql
+-- Restaura a proteção editorial que foi removida pela migração
+-- 20261112000000_simplify_recipe_publication.sql.
+--
+-- Para fichas compostas, ingredientes, etapas e alertas podem estar nas
+-- receitas-componentes vinculadas, sem linhas diretas na receita principal.
+-- Esta função considera ambos os formatos, sem alterar registros existentes.
+
+create or replace function public.guard_recipe_status()
+returns trigger
+language plpgsql
+set search_path = ''
+as $function$
+declare
+  v_permission text;
+  v_status_changed boolean;
+begin
+  if tg_op = 'INSERT' then
+    v_status_changed := true;
+  else
+    v_status_changed := old.status is distinct from new.status;
+  end if;
+
+  -- Edições comuns da ficha não reabrem o fluxo editorial automaticamente.
+  if not v_status_changed then
+    return new;
+  end if;
+
+  if new.status in ('approved', 'published') then
+    if new.content_state is distinct from 'structured'
+      or not exists (
+        select 1
+        from public.recipe_ingredients i
+        where i.recipe_id = new.id
+           or exists (
+             select 1
+             from public.recipe_components rc
+             where rc.recipe_id = new.id
+               and rc.linked_recipe_id = i.recipe_id
+           )
+      )
+      or not exists (
+        select 1
+        from public.recipe_steps s
+        where s.recipe_id = new.id
+           or exists (
+             select 1
+             from public.recipe_components rc
+             where rc.recipe_id = new.id
+               and rc.linked_recipe_id = s.recipe_id
+           )
+      )
+    then
+      raise exception 'CONTENT_REQUIRED: a receita precisa ter uma ficha estruturada, com ingredientes e modo de preparo.'
+        using errcode = 'P0001';
+    end if;
+
+    if exists (
+      select 1
+      from public.review_flags f
+      where f.resolved_at is null
+        and f.severity in ('warning', 'blocker')
+        and (
+          f.recipe_id = new.id
+          or exists (
+            select 1
+            from public.recipe_components rc
+            where rc.recipe_id = new.id
+              and rc.linked_recipe_id = f.recipe_id
+          )
+        )
+    ) then
+      raise exception 'FLAGS_PENDING: existem pontos de revisão em aberto nesta ficha ou em seus componentes vinculados.'
+        using errcode = 'P0001';
+    end if;
+  end if;
+
+  if new.status = 'approved' then
+    new.reviewed_at := now();
+    new.reviewed_by := coalesce(auth.uid(), new.reviewed_by);
+  end if;
+
+  if new.status = 'published' then
+    if new.reviewed_at is null then
+      raise exception 'APPROVAL_REQUIRED: a ficha precisa passar pela aprovação humana antes da publicação.'
+        using errcode = 'P0001';
+    end if;
+
+    select d.commercial_permission
+      into v_permission
+    from public.source_documents d
+    where d.id = new.source_document_id;
+
+    if v_permission is distinct from 'confirmed' then
+      raise exception 'PERMISSION_REQUIRED: confirme a permissão comercial do documento de origem antes da publicação.'
+        using errcode = 'P0001';
+    end if;
+
+    if exists (
+      select 1
+      from public.recipe_components rc
+      join public.recipes linked_recipe on linked_recipe.id = rc.linked_recipe_id
+      where rc.recipe_id = new.id
+        and linked_recipe.status <> 'published'
+    ) then
+      raise exception 'LINKED_COMPONENT_UNPUBLISHED: publique antes os componentes compartilhados desta receita.'
+        using errcode = 'P0001';
+    end if;
+
+    new.published_at := coalesce(new.published_at, now());
+  end if;
+
+  return new;
+end
+$function$;
+
+-- >>>>>>>>>> migrations/20261118132500_reconcile_rabanada_compatibilities.sql
+-- Corrige as bases das seis combinações confirmadas no PDF de Rabanadas Recheadas.
+-- Preserva os registros e IDs das compatibilidades: apenas troca a referência da base
+-- (orientação das páginas 3/4) pela ficha real de massa (páginas 8/9).
+-- Cada página de origem abaixo contém o recheio correspondente e identifica a versão doce/salgada.
+with expected (
+  legacy_base_slug,
+  base_slug,
+  filling_slug,
+  source_page,
+  note
+) as (
+  values
+    (
+      'pao-para-rabanada-doce',
+      'massa-pao-rabanada-doce',
+      'rabanada-doce-recheada-com-nutella',
+      14,
+      'Base: massa de pão para rabanada doce (página 8); recheio Nutella e finalização com açúcar e canela (página 14). Correspondência conferida no texto extraído do PDF.'
+    ),
+    (
+      'pao-para-rabanada-doce',
+      'massa-pao-rabanada-doce',
+      'rabanada-doce-recheada-com-doce-de-leite',
+      15,
+      'Base: massa de pão para rabanada doce (página 8); recheio de doce de leite e finalização com açúcar e canela (página 15). Correspondência conferida no texto extraído do PDF.'
+    ),
+    (
+      'pao-para-rabanada-doce',
+      'massa-pao-rabanada-doce',
+      'rabanada-doce-com-brigadeiro-de-nozes',
+      16,
+      'Base: massa de pão para rabanada doce (página 8); brigadeiro de nozes e finalização com açúcar e canela (página 16). Correspondência conferida no texto extraído do PDF.'
+    ),
+    (
+      'pao-para-rabanada-salgada',
+      'massa-pao-rabanada-salgada',
+      'rabanada-salgada-com-gorgonzola-nozes-e-damasco',
+      18,
+      'Base: massa de pão para rabanada salgada (página 9); creme de gorgonzola, nozes e damasco (página 18), identificado como rabanada salgada. Correspondência conferida no texto extraído do PDF.'
+    ),
+    (
+      'pao-para-rabanada-salgada',
+      'massa-pao-rabanada-salgada',
+      'rabanada-salgada-com-salame-e-ricota',
+      20,
+      'Base: massa de pão para rabanada salgada (página 9); creme de salame e ricota (página 20), identificado como rabanada salgada. Correspondência conferida no texto extraído do PDF.'
+    ),
+    (
+      'pao-para-rabanada-salgada',
+      'massa-pao-rabanada-salgada',
+      'rabanada-salgada-com-peito-de-peru-e-queijo',
+      22,
+      'Base: massa de pão para rabanada salgada (página 9); creme de peito de peru com queijo (página 22), identificado como rabanada salgada. Correspondência conferida no texto extraído do PDF.'
+    )
+),
+matched as (
+  select
+    compatibility.id as compatibility_id,
+    actual_base.id as actual_base_id,
+    expected.source_page,
+    expected.note
+  from expected
+  join public.recipes legacy_base
+    on legacy_base.slug = expected.legacy_base_slug
+   and legacy_base.kind = 'component'
+   and legacy_base.component_role = 'base'
+  join public.recipes actual_base
+    on actual_base.slug = expected.base_slug
+   and actual_base.kind = 'component'
+   and actual_base.component_role = 'base'
+  join public.recipes filling
+    on filling.slug = expected.filling_slug
+   and filling.kind = 'variation'
+  join public.recipe_compatibilities compatibility
+    on compatibility.recipe_id = legacy_base.id
+   and compatibility.compatible_recipe_id = filling.id
+   and compatibility.relation = 'recheio'
+)
+update public.recipe_compatibilities compatibility
+set recipe_id = matched.actual_base_id,
+    source_page = matched.source_page,
+    verified = true,
+    note = matched.note
+from matched
+where compatibility.id = matched.compatibility_id
+  and (
+    compatibility.recipe_id,
+    compatibility.source_page,
+    compatibility.verified,
+    compatibility.note
+  ) is distinct from (
+    matched.actual_base_id,
+    matched.source_page,
+    true,
+    matched.note
+  );
 
 -- >>>>>>>>>> seed.sql
 -- =====================================================================
