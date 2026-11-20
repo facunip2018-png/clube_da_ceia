@@ -89,10 +89,10 @@ describe('proteção editorial de fichas compostas por componentes vinculados', 
     const [linked] = await db.sql<{ ingredients: number; steps: number }>(`
       select
         (select count(*)::int from public.recipe_ingredients i
-          where i.recipe_id in ($2, $3)) as ingredients,
+          where i.recipe_id in ($1, $2)) as ingredients,
         (select count(*)::int from public.recipe_steps s
-          where s.recipe_id in ($2, $3)) as steps
-    `, [variationId, baseId, fillingId]);
+          where s.recipe_id in ($1, $2)) as steps
+    `, [baseId, fillingId]);
     expect(linked).toEqual({ ingredients: 2, steps: 2 });
 
     await db.sql(`
