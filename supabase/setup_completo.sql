@@ -859,25 +859,57 @@ end $$;
 -- ---------------------------------------------------------------------
 -- Fluxo editorial: draft → review → approved → published
 -- ---------------------------------------------------------------------
-create or replace function public.guard_recipe_status() returns trigger
-language plpgsql set search_path = '' as $$
+-- Restaura a proteção editorial que foi removida pela migração
+-- 20261112000000_simplify_recipe_publication.sql.
+--
+-- Esta migração altera somente a função de validação de transição.
+-- Não muda o status das receitas existentes, não atualiza conteúdo e não
+-- modifica autenticação, RLS, permissões ou Storage.
+
+create or replace function public.guard_recipe_status()
+returns trigger
+language plpgsql
+set search_path = ''
+as $function$
 declare
   v_permission text;
-  v_changed boolean := (tg_op = 'INSERT') or (old.status is distinct from new.status);
+  v_status_changed boolean;
 begin
-  if not v_changed then
+  if tg_op = 'INSERT' then
+    v_status_changed := true;
+  else
+    v_status_changed := old.status is distinct from new.status;
+  end if;
+
+  -- Edições comuns da ficha não reabrem o fluxo editorial automaticamente.
+  if not v_status_changed then
     return new;
   end if;
 
   if new.status in ('approved', 'published') then
-    if new.content_state <> 'structured' then
-      raise exception 'CONTENT_REQUIRED: a receita ainda não possui ficha estruturada.' using errcode = 'P0001';
+    if new.content_state is distinct from 'structured'
+      or not exists (
+        select 1 from public.recipe_ingredients i
+        where i.recipe_id = new.id
+      )
+      or not exists (
+        select 1 from public.recipe_steps s
+        where s.recipe_id = new.id
+      )
+    then
+      raise exception 'CONTENT_REQUIRED: a receita precisa ter uma ficha estruturada, com ingredientes e modo de preparo.'
+        using errcode = 'P0001';
     end if;
+
     if exists (
-      select 1 from public.review_flags f
-      where f.recipe_id = new.id and f.resolved_at is null and f.severity in ('warning', 'blocker')
+      select 1
+      from public.review_flags f
+      where f.recipe_id = new.id
+        and f.resolved_at is null
+        and f.severity in ('warning', 'blocker')
     ) then
-      raise exception 'FLAGS_PENDING: existem pontos de revisão em aberto nesta ficha.' using errcode = 'P0001';
+      raise exception 'FLAGS_PENDING: existem pontos de revisão em aberto nesta ficha.'
+        using errcode = 'P0001';
     end if;
   end if;
 
@@ -888,27 +920,37 @@ begin
 
   if new.status = 'published' then
     if new.reviewed_at is null then
-      raise exception 'APPROVAL_REQUIRED: a ficha precisa ser aprovada na revisão antes de ser publicada.' using errcode = 'P0001';
+      raise exception 'APPROVAL_REQUIRED: a ficha precisa ser aprovada na revisão antes de ser publicada.'
+        using errcode = 'P0001';
     end if;
-    select d.commercial_permission into v_permission
-    from public.source_documents d where d.id = new.source_document_id;
+
+    select d.commercial_permission
+      into v_permission
+    from public.source_documents d
+    where d.id = new.source_document_id;
+
     if v_permission is distinct from 'confirmed' then
-      raise exception 'PERMISSION_REQUIRED: confirme a permissão comercial do documento de origem antes de publicar.' using errcode = 'P0001';
+      raise exception 'PERMISSION_REQUIRED: confirme a permissão comercial do documento de origem antes da publicação.'
+        using errcode = 'P0001';
     end if;
+
     if exists (
       select 1
       from public.recipe_components rc
-      join public.recipes lr on lr.id = rc.linked_recipe_id
-      where rc.recipe_id = new.id and lr.status <> 'published'
+      join public.recipes linked_recipe on linked_recipe.id = rc.linked_recipe_id
+      where rc.recipe_id = new.id
+        and linked_recipe.status <> 'published'
     ) then
-      raise exception 'LINKED_COMPONENT_UNPUBLISHED: publique antes os componentes compartilhados desta receita.' using errcode = 'P0001';
+      raise exception 'LINKED_COMPONENT_UNPUBLISHED: publique antes os componentes compartilhados desta receita.'
+        using errcode = 'P0001';
     end if;
+
     new.published_at := coalesce(new.published_at, now());
   end if;
 
   return new;
-end $$;
-
+end
+$function$;
 create trigger guard_recipe_status
   before insert or update on public.recipes
   for each row execute function public.guard_recipe_status();
@@ -3484,3 +3526,654 @@ insert into public.review_flags (id, recipe_id, source_document_id, entity, enti
 on conflict (id) do nothing;
 
 commit;
+
+-- Migrações estruturais posteriores ao arquivo-base.
+-- Mantêm o arquivo único equivalente ao esquema atual sem reaplicar conteúdo de receitas.
+
+-- Sincronização do arquivo único: supabase/migrations/20261112150000_support_materials.sql
+-- Materiais de apoio compartilhados: utensílios, ingredientes básicos, dicas e orientações.
+create table if not exists public.support_materials (
+  id uuid primary key default gen_random_uuid(),
+  slug text not null unique,
+  kind text not null check (kind in ('utensilios', 'ingredientes', 'dicas', 'orientacoes')),
+  title text not null,
+  body text not null,
+  source_document_id uuid references public.source_documents(id) on delete set null,
+  source_page integer check (source_page is null or source_page > 0),
+  position integer not null default 0,
+  is_visible boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists support_materials_kind_position_idx
+  on public.support_materials (kind, position);
+
+alter table public.support_materials enable row level security;
+
+grant select, insert, update, delete on public.support_materials to authenticated;
+
+create policy "materiais de apoio para assinantes" on public.support_materials
+  for select to authenticated
+  using (
+    (select public.is_admin())
+    or ((select public.has_active_access()) and is_visible)
+  );
+
+create policy "administradores gerenciam materiais de apoio" on public.support_materials
+  for all to authenticated
+  using ((select public.is_admin()))
+  with check ((select public.is_admin()));
+
+create trigger set_updated_at
+  before update on public.support_materials
+  for each row execute function public.set_updated_at();
+
+create trigger audit_row_change
+  after insert or update or delete on public.support_materials
+  for each row execute function public.audit_row_change();
+
+-- Sincronização do arquivo único: supabase/migrations/20261112160000_allow_subscribers_download_source_pdfs.sql
+create or replace view public.source_document_refs as
+select
+  d.id,
+  d.title,
+  d.author,
+  d.publisher,
+  d.language,
+  d.file_name,
+  d.storage_path
+from public.source_documents d
+where exists (
+  select 1
+  from public.recipes r
+  where r.source_document_id = d.id
+    and r.status = 'published'
+);
+
+grant select on public.source_document_refs to anon, authenticated;
+
+drop policy if exists "pdfs originais: assinantes e administradores baixam" on storage.objects;
+create policy "pdfs originais: assinantes e administradores baixam"
+on storage.objects
+for select
+to authenticated
+using (
+  bucket_id = 'source-documents'
+  and coalesce((select public.my_access() ->> 'has_access'), 'false') = 'true'
+);
+
+-- Sincronização do arquivo único: supabase/migrations/20261112180000_automatic_pdf_recipe_import.sql
+create or replace function public.admin_import_pdf_recipes(p_document_id uuid, p_payload jsonb)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_doc public.source_documents%rowtype;
+  v_collection_id uuid;
+  v_collection_name text;
+  v_collection_slug text;
+  v_recipe jsonb;
+  v_ingredient jsonb;
+  v_step jsonb;
+  v_material jsonb;
+  v_recipe_id uuid;
+  v_ingredient_id uuid;
+  v_title text;
+  v_slug text;
+  v_base_slug text;
+  v_name text;
+  v_name_slug text;
+  v_position integer;
+  v_ingredient_position integer;
+  v_step_position integer;
+  v_created integer := 0;
+  v_skipped integer := 0;
+  v_materials integer := 0;
+  v_permission_ok boolean;
+begin
+  if not coalesce(public.is_admin(), false) then
+    raise exception 'Apenas administradores podem importar documentos.';
+  end if;
+
+  select * into v_doc
+  from public.source_documents
+  where id = p_document_id
+  for update;
+
+  if not found then
+    raise exception 'Documento não encontrado.';
+  end if;
+
+  if v_doc.storage_path is null or v_doc.file_status <> 'stored' then
+    raise exception 'Envie o PDF antes de iniciar a leitura.';
+  end if;
+
+  if jsonb_typeof(p_payload->'recipes') <> 'array' then
+    raise exception 'A leitura não retornou uma lista de receitas válida.';
+  end if;
+
+  v_collection_id := v_doc.collection_id;
+  v_collection_name := nullif(trim(p_payload#>>'{collection,name}'), '');
+
+  if v_collection_id is null and v_collection_name is not null then
+    v_collection_slug := trim(both '-' from regexp_replace(
+      lower(translate(v_collection_name,
+        'áàâãäéèêëíìîïóòôõöúùûüçñ',
+        'aaaaaeeeeiiiiooooouuuucn')),
+      '[^a-z0-9]+', '-', 'g'));
+    if v_collection_slug = '' then
+      v_collection_slug := 'colecao-' || substr(md5(v_collection_name), 1, 8);
+    end if;
+    insert into public.collections (slug, name, description, experience, position, is_visible)
+    values (
+      v_collection_slug,
+      v_collection_name,
+      nullif(trim(p_payload#>>'{collection,description}'), ''),
+      'catalog',
+      coalesce((select max(position) + 1 from public.collections), 0),
+      true
+    )
+    on conflict (slug) do update set name = excluded.name
+    returning id into v_collection_id;
+
+    update public.source_documents
+    set collection_id = v_collection_id
+    where id = p_document_id;
+  end if;
+
+  if v_collection_id is null then
+    raise exception 'Não foi possível identificar a categoria deste PDF.';
+  end if;
+
+  v_permission_ok := v_doc.commercial_permission = 'confirmed';
+  select coalesce(max(position), 0) + 1 into v_position
+  from public.recipes
+  where collection_id = v_collection_id;
+
+  for v_recipe in
+    select value from jsonb_array_elements(p_payload->'recipes')
+  loop
+    v_title := nullif(trim(v_recipe->>'title'), '');
+
+    if v_title is null
+       or jsonb_typeof(v_recipe->'ingredients') <> 'array'
+       or jsonb_array_length(v_recipe->'ingredients') = 0
+       or jsonb_typeof(v_recipe->'steps') <> 'array'
+       or jsonb_array_length(v_recipe->'steps') = 0 then
+      v_skipped := v_skipped + 1;
+      continue;
+    end if;
+
+    if exists (
+      select 1 from public.recipes
+      where source_document_id = p_document_id
+        and lower(title) = lower(v_title)
+        and status <> 'archived'
+    ) then
+      v_skipped := v_skipped + 1;
+      continue;
+    end if;
+
+    v_base_slug := trim(both '-' from regexp_replace(
+      lower(translate(v_title,
+        'áàâãäéèêëíìîïóòôõöúùûüçñ',
+        'aaaaaeeeeiiiiooooouuuucn')),
+      '[^a-z0-9]+', '-', 'g'));
+    if v_base_slug = '' then
+      v_base_slug := 'receita-' || substr(md5(v_title), 1, 8);
+    end if;
+    v_slug := v_base_slug;
+    while exists (select 1 from public.recipes where slug = v_slug) loop
+      v_slug := v_base_slug || '-' || substr(md5(v_title || clock_timestamp()::text), 1, 6);
+    end loop;
+
+    insert into public.recipes (
+      slug, collection_id, source_document_id, kind, title, original_title,
+      original_language, translation_status, description, difficulty,
+      yield_text, prep_minutes, cook_minutes, bake_minutes, chill_minutes,
+      rest_minutes, source_page_start, source_page_end, content_state,
+      status, position
+    ) values (
+      v_slug, v_collection_id, p_document_id, 'recipe', v_title,
+      nullif(trim(v_recipe->>'original_title'), ''),
+      coalesce(nullif(v_recipe->>'original_language', ''), 'pt-BR'),
+      case when coalesce(v_recipe->>'original_language', 'pt-BR') = 'pt-BR' then 'not_needed' else 'pending' end,
+      nullif(trim(v_recipe->>'description'), ''),
+      case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+      nullif(trim(v_recipe->>'yield_text'), ''),
+      nullif(v_recipe->>'prep_minutes','')::integer,
+      nullif(v_recipe->>'cook_minutes','')::integer,
+      nullif(v_recipe->>'bake_minutes','')::integer,
+      nullif(v_recipe->>'chill_minutes','')::integer,
+      nullif(v_recipe->>'rest_minutes','')::integer,
+      nullif(v_recipe->>'source_page_start','')::integer,
+      nullif(v_recipe->>'source_page_end','')::integer,
+      'structured', 'draft', v_position
+    ) returning id into v_recipe_id;
+
+    v_ingredient_position := 0;
+    for v_ingredient in select value from jsonb_array_elements(v_recipe->'ingredients')
+    loop
+      v_name := nullif(trim(v_ingredient->>'display_name'), '');
+      if v_name is null then
+        continue;
+      end if;
+      v_name_slug := trim(both '-' from regexp_replace(
+        lower(translate(v_name,
+          'áàâãäéèêëíìîïóòôõöúùûüçñ',
+          'aaaaaeeeeiiiiooooouuuucn')),
+        '[^a-z0-9]+', '-', 'g'));
+      if v_name_slug = '' then
+        v_name_slug := 'ingrediente-' || substr(md5(v_name), 1, 8);
+      end if;
+
+      insert into public.ingredients (slug, name)
+      values (v_name_slug, v_name)
+      on conflict (slug) do update set name = excluded.name
+      returning id into v_ingredient_id;
+
+      v_ingredient_position := v_ingredient_position + 1;
+      insert into public.recipe_ingredients (
+        recipe_id, ingredient_id, position, quantity, quantity_max, unit,
+        quantity_text, display_name, preparation, scaling, is_optional,
+        original_text, source_page, needs_review
+      ) values (
+        v_recipe_id, v_ingredient_id, v_ingredient_position,
+        nullif(v_ingredient->>'quantity','')::numeric,
+        nullif(v_ingredient->>'quantity_max','')::numeric,
+        nullif(trim(v_ingredient->>'unit'),''),
+        nullif(trim(v_ingredient->>'quantity_text'),''),
+        v_name,
+        nullif(trim(v_ingredient->>'preparation'),''),
+        'linear',
+        coalesce((v_ingredient->>'is_optional')::boolean, false),
+        coalesce(nullif(trim(v_ingredient->>'original_text'), ''), v_name),
+        nullif(v_ingredient->>'source_page','')::integer,
+        false
+      );
+    end loop;
+
+    v_step_position := 0;
+    for v_step in select value from jsonb_array_elements(v_recipe->'steps')
+    loop
+      if nullif(trim(v_step->>'instruction'), '') is null then
+        continue;
+      end if;
+      v_step_position := v_step_position + 1;
+      insert into public.recipe_steps (
+        recipe_id, position, instruction, original_text, tip, source_page, needs_review
+      ) values (
+        v_recipe_id, v_step_position,
+        trim(v_step->>'instruction'),
+        nullif(trim(v_step->>'original_text'), ''),
+        nullif(trim(v_step->>'tip'), ''),
+        nullif(v_step->>'source_page','')::integer,
+        false
+      );
+    end loop;
+
+    if v_ingredient_position = 0 or v_step_position = 0 then
+      delete from public.recipes where id = v_recipe_id;
+      v_skipped := v_skipped + 1;
+      continue;
+    end if;
+
+    if v_permission_ok then
+      update public.recipes
+      set status = 'published', published_at = now()
+      where id = v_recipe_id;
+    else
+      update public.recipes
+      set status = 'pending_permission'
+      where id = v_recipe_id;
+    end if;
+
+    v_created := v_created + 1;
+    v_position := v_position + 1;
+  end loop;
+
+  for v_material in
+    select value from jsonb_array_elements(coalesce(p_payload->'support_materials', '[]'::jsonb))
+  loop
+    if nullif(trim(v_material->>'title'), '') is null
+       or nullif(trim(v_material->>'body'), '') is null then
+      continue;
+    end if;
+    insert into public.support_materials (
+      slug, kind, title, body, source_document_id, source_page, position, is_visible
+    ) values (
+      'pdf-' || substr(md5(p_document_id::text || v_material->>'title' || coalesce(v_material->>'source_page','')),1,20),
+      case when v_material->>'kind' in ('utensilios','ingredientes','dicas','orientacoes') then v_material->>'kind' else 'orientacoes' end,
+      trim(v_material->>'title'),
+      trim(v_material->>'body'),
+      p_document_id,
+      nullif(v_material->>'source_page','')::integer,
+      coalesce((select max(position) + 1 from public.support_materials), 0),
+      true
+    )
+    on conflict (slug) do nothing;
+    if found then v_materials := v_materials + 1; end if;
+  end loop;
+
+  update public.source_documents
+  set import_notes = concat_ws(E'\n', nullif(import_notes, ''),
+      'Leitura automática em ' || to_char(now(), 'YYYY-MM-DD HH24:MI') ||
+      ': ' || v_created || ' receita(s) criada(s), ' || v_skipped ||
+      ' ignorada(s), ' || v_materials || ' material(is) de apoio.')
+  where id = p_document_id;
+
+  return jsonb_build_object(
+    'created', v_created,
+    'skipped', v_skipped,
+    'support_materials', v_materials,
+    'published', v_permission_ok
+  );
+end;
+$$;
+
+revoke all on function public.admin_import_pdf_recipes(uuid, jsonb) from public, anon;
+grant execute on function public.admin_import_pdf_recipes(uuid, jsonb) to authenticated;
+
+-- Sincronização do arquivo único: supabase/migrations/20261112193000_openrouter_secret_from_supabase_vault.sql
+create or replace function public.admin_get_openrouter_key()
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  secret_value text;
+begin
+  if auth.uid() is null or not public.is_admin() then
+    raise exception 'Acesso negado';
+  end if;
+
+  select decrypted_secret
+    into secret_value
+    from vault.decrypted_secrets
+   where name = 'openrouter_api_key'
+   limit 1;
+
+  return secret_value;
+end;
+$$;
+
+revoke all on function public.admin_get_openrouter_key() from public;
+revoke all on function public.admin_get_openrouter_key() from anon;
+grant execute on function public.admin_get_openrouter_key() to authenticated;
+
+-- Sincronização do arquivo único: supabase/migrations/20261112210000_extrair_texto_pdf_sem_ia.sql
+create table if not exists public.document_extracted_pages (
+  source_document_id uuid not null references public.source_documents(id) on delete cascade,
+  page_number integer not null check (page_number > 0),
+  page_text text not null default '',
+  extracted_at timestamptz not null default now(),
+  primary key (source_document_id, page_number)
+);
+
+alter table public.document_extracted_pages enable row level security;
+revoke all on public.document_extracted_pages from anon, authenticated;
+grant select, insert, update, delete on public.document_extracted_pages to authenticated;
+grant all on public.document_extracted_pages to service_role;
+
+create policy "administradores acessam texto extraido dos PDFs"
+  on public.document_extracted_pages
+  for all to authenticated
+  using ((select public.is_admin()))
+  with check ((select public.is_admin()));
+
+comment on table public.document_extracted_pages is
+  'Texto extraído localmente dos PDFs privados para revisão e cadastro administrativo, sem uso de serviços de IA.';
+
+-- Sincronização do arquivo único: supabase/migrations/20261114011648_fix_support_materials_slug_expression.sql
+-- Corrige a precedência dos operadores ao gerar o slug de materiais de apoio.
+-- Sem os parênteses, o PostgreSQL tentava aplicar ->> ao resultado de concatenação.
+CREATE OR REPLACE FUNCTION public.admin_import_pdf_recipes(p_document_id uuid, p_payload jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_doc public.source_documents%rowtype;
+  v_collection_id uuid;
+  v_collection_name text;
+  v_collection_slug text;
+  v_recipe jsonb;
+  v_ingredient jsonb;
+  v_step jsonb;
+  v_material jsonb;
+  v_recipe_id uuid;
+  v_ingredient_id uuid;
+  v_title text;
+  v_slug text;
+  v_base_slug text;
+  v_name text;
+  v_name_slug text;
+  v_position integer;
+  v_ingredient_position integer;
+  v_step_position integer;
+  v_created integer := 0;
+  v_skipped integer := 0;
+  v_materials integer := 0;
+  v_permission_ok boolean;
+  v_existing_recipe_id uuid;
+  v_existing_recipe_empty boolean;
+begin
+  if not coalesce(public.is_admin(), false) then raise exception 'Apenas administradores podem importar documentos.'; end if;
+  select * into v_doc from public.source_documents where id = p_document_id for update;
+  if not found then raise exception 'Documento não encontrado.'; end if;
+  if v_doc.storage_path is null or v_doc.file_status <> 'stored' then raise exception 'Envie o PDF antes de iniciar a leitura.'; end if;
+  if jsonb_typeof(p_payload->'recipes') <> 'array' then raise exception 'A leitura não retornou uma lista de receitas válida.'; end if;
+
+  v_collection_id := v_doc.collection_id;
+  v_collection_name := nullif(trim(p_payload#>>'{collection,name}'), '');
+  if v_collection_id is null and v_collection_name is not null then
+    v_collection_slug := trim(both '-' from regexp_replace(lower(translate(v_collection_name,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+    if v_collection_slug = '' then v_collection_slug := 'colecao-' || substr(md5(v_collection_name),1,8); end if;
+    insert into public.collections (slug,name,description,experience,position,is_visible)
+    values (v_collection_slug,v_collection_name,nullif(trim(p_payload#>>'{collection,description}'),''),'catalog',coalesce((select max(position)+1 from public.collections),0),true)
+    on conflict (slug) do update set name=excluded.name returning id into v_collection_id;
+    update public.source_documents set collection_id=v_collection_id where id=p_document_id;
+  end if;
+  if v_collection_id is null then raise exception 'Não foi possível identificar a categoria deste PDF.'; end if;
+
+  v_permission_ok := v_doc.commercial_permission = 'confirmed';
+  select coalesce(max(position),0)+1 into v_position from public.recipes where collection_id=v_collection_id;
+
+  for v_recipe in select value from jsonb_array_elements(p_payload->'recipes') loop
+    v_title := nullif(trim(v_recipe->>'title'),'');
+    if v_title is null or jsonb_typeof(v_recipe->'ingredients') <> 'array' or jsonb_array_length(v_recipe->'ingredients')=0 or jsonb_typeof(v_recipe->'steps') <> 'array' or jsonb_array_length(v_recipe->'steps')=0 then
+      v_skipped:=v_skipped+1; continue;
+    end if;
+    v_existing_recipe_id:=null;
+    v_existing_recipe_empty:=false;
+    select id into v_existing_recipe_id
+      from public.recipes
+     where source_document_id=p_document_id
+       and lower(title)=lower(v_title)
+       and status<>'archived'
+     limit 1;
+
+    if v_existing_recipe_id is not null then
+      select
+        status='draft'
+        and content_state='catalogued'
+        and not exists(select 1 from public.recipe_ingredients where recipe_id=v_existing_recipe_id)
+        and not exists(select 1 from public.recipe_steps where recipe_id=v_existing_recipe_id)
+        into v_existing_recipe_empty
+        from public.recipes
+       where id=v_existing_recipe_id;
+
+      if not coalesce(v_existing_recipe_empty,false) then
+        v_skipped:=v_skipped+1;
+        continue;
+      end if;
+
+      -- Completa a ficha vazia já existente, preservando seu ID, slug e posição.
+      v_recipe_id:=v_existing_recipe_id;
+      update public.recipes
+         set original_title=nullif(trim(v_recipe->>'original_title'),''),
+             original_language=coalesce(nullif(v_recipe->>'original_language',''),'pt-BR'),
+             translation_status=case when coalesce(v_recipe->>'original_language','pt-BR')='pt-BR' then 'not_needed' else 'pending' end,
+             description=nullif(trim(v_recipe->>'description'),''),
+             difficulty=case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+             yield_text=nullif(trim(v_recipe->>'yield_text'),''),
+             prep_minutes=nullif(v_recipe->>'prep_minutes','')::integer,
+             cook_minutes=nullif(v_recipe->>'cook_minutes','')::integer,
+             bake_minutes=nullif(v_recipe->>'bake_minutes','')::integer,
+             chill_minutes=nullif(v_recipe->>'chill_minutes','')::integer,
+             rest_minutes=nullif(v_recipe->>'rest_minutes','')::integer,
+             source_page_start=nullif(v_recipe->>'source_page_start','')::integer,
+             source_page_end=nullif(v_recipe->>'source_page_end','')::integer,
+             content_state='structured'
+       where id=v_recipe_id;
+    else
+      v_base_slug:=trim(both '-' from regexp_replace(lower(translate(v_title,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+      if v_base_slug='' then v_base_slug:='receita-'||substr(md5(v_title),1,8); end if;
+      v_slug:=v_base_slug;
+      while exists(select 1 from public.recipes where slug=v_slug) loop v_slug:=v_base_slug||'-'||substr(md5(v_title||clock_timestamp()::text),1,6); end loop;
+
+      insert into public.recipes(slug,collection_id,source_document_id,kind,title,original_title,original_language,translation_status,description,difficulty,yield_text,prep_minutes,cook_minutes,bake_minutes,chill_minutes,rest_minutes,source_page_start,source_page_end,content_state,status,position)
+      values(v_slug,v_collection_id,p_document_id,'recipe',v_title,nullif(trim(v_recipe->>'original_title'),''),coalesce(nullif(v_recipe->>'original_language',''),'pt-BR'),
+        case when coalesce(v_recipe->>'original_language','pt-BR')='pt-BR' then 'not_needed' else 'pending' end,
+        nullif(trim(v_recipe->>'description'),''),case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+        nullif(trim(v_recipe->>'yield_text'),''),nullif(v_recipe->>'prep_minutes','')::integer,nullif(v_recipe->>'cook_minutes','')::integer,
+        nullif(v_recipe->>'bake_minutes','')::integer,nullif(v_recipe->>'chill_minutes','')::integer,nullif(v_recipe->>'rest_minutes','')::integer,
+        nullif(v_recipe->>'source_page_start','')::integer,nullif(v_recipe->>'source_page_end','')::integer,'structured','draft',v_position)
+      returning id into v_recipe_id;
+    end if;
+
+    v_ingredient_position:=0;
+    for v_ingredient in select value from jsonb_array_elements(v_recipe->'ingredients') loop
+      v_name:=nullif(trim(v_ingredient->>'display_name'),'');
+      if v_name is null then continue; end if;
+      v_name_slug:=trim(both '-' from regexp_replace(lower(translate(v_name,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+      if v_name_slug='' then v_name_slug:='ingrediente-'||substr(md5(v_name),1,8); end if;
+      insert into public.ingredients(slug,name) values(v_name_slug,v_name)
+      on conflict(slug) do update set name=excluded.name returning id into v_ingredient_id;
+      v_ingredient_position:=v_ingredient_position+1;
+      insert into public.recipe_ingredients(recipe_id,ingredient_id,position,quantity,quantity_max,unit,quantity_text,display_name,preparation,scaling,is_optional,original_text,source_page,needs_review)
+      values(v_recipe_id,v_ingredient_id,v_ingredient_position,nullif(v_ingredient->>'quantity','')::numeric,nullif(v_ingredient->>'quantity_max','')::numeric,
+        nullif(trim(v_ingredient->>'unit'),''),nullif(trim(v_ingredient->>'quantity_text'),''),v_name,nullif(trim(v_ingredient->>'preparation'),''),'linear',
+        coalesce((v_ingredient->>'is_optional')::boolean,false),coalesce(nullif(trim(v_ingredient->>'original_text'),''),v_name),nullif(v_ingredient->>'source_page','')::integer,false);
+    end loop;
+
+    v_step_position:=0;
+    for v_step in select value from jsonb_array_elements(v_recipe->'steps') loop
+      if nullif(trim(v_step->>'instruction'),'') is null then continue; end if;
+      v_step_position:=v_step_position+1;
+      insert into public.recipe_steps(recipe_id,position,instruction,original_text,tip,source_page,needs_review)
+      values(v_recipe_id,v_step_position,trim(v_step->>'instruction'),nullif(trim(v_step->>'original_text'),''),nullif(trim(v_step->>'tip'),''),nullif(v_step->>'source_page','')::integer,false);
+    end loop;
+
+    if v_ingredient_position=0 or v_step_position=0 then delete from public.recipes where id=v_recipe_id; v_skipped:=v_skipped+1; continue; end if;
+    if v_permission_ok then update public.recipes set status='published',published_at=now() where id=v_recipe_id;
+    else update public.recipes set status='pending_permission' where id=v_recipe_id; end if;
+    v_created:=v_created+1; v_position:=v_position+1;
+  end loop;
+
+  for v_material in select value from jsonb_array_elements(coalesce(p_payload->'support_materials','[]'::jsonb)) loop
+    if nullif(trim(v_material->>'title'),'') is null or nullif(trim(v_material->>'body'),'') is null then continue; end if;
+    insert into public.support_materials(slug,kind,title,body,source_document_id,source_page,position,is_visible)
+    values('pdf-'||substr(md5(p_document_id::text || (v_material->>'title') || coalesce(v_material->>'source_page','')),1,20),
+      case when v_material->>'kind' in ('utensilios','ingredientes','dicas','orientacoes') then v_material->>'kind' else 'orientacoes' end,
+      trim(v_material->>'title'),trim(v_material->>'body'),p_document_id,nullif(v_material->>'source_page','')::integer,
+      coalesce((select max(position)+1 from public.support_materials),0),true)
+    on conflict(slug) do nothing;
+    if found then v_materials:=v_materials+1; end if;
+  end loop;
+
+  update public.source_documents set import_notes=concat_ws(E'\n',nullif(import_notes,''),'Leitura automática em '||to_char(now(),'YYYY-MM-DD HH24:MI')||': '||v_created||' receita(s) criada(s), '||v_skipped||' ignorada(s), '||v_materials||' material(is) de apoio.') where id=p_document_id;
+  return jsonb_build_object('created',v_created,'skipped',v_skipped,'support_materials',v_materials,'published',v_permission_ok);
+end;
+$function$;
+
+-- Sincronização do arquivo único: supabase/migrations/20261117125809_create_video_library.sql
+-- Biblioteca de vídeos Gumlet do Clube da Ceia Perfeita.
+-- Vídeos publicados são visíveis somente para assinantes com acesso ativo; CRUD é exclusivo de administradores.
+begin;
+create table if not exists public.videos (
+  id uuid primary key default gen_random_uuid(),
+  slug text not null unique,
+  title text not null check (char_length(btrim(title)) between 2 and 160),
+  description text,
+  hls_url text,
+  mp4_url text,
+  thumbnail_url text,
+  duration_seconds integer check (duration_seconds is null or duration_seconds > 0),
+  collection_id uuid references public.collections(id) on delete set null,
+  recipe_id uuid references public.recipes(id) on delete set null,
+  status text not null default 'draft' check (status in ('draft', 'published', 'archived')),
+  position integer not null default 0,
+  created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint videos_has_source check (hls_url is not null or mp4_url is not null),
+  constraint videos_hls_https check (hls_url is null or hls_url ~* '^https://'),
+  constraint videos_mp4_https check (mp4_url is null or mp4_url ~* '^https://'),
+  constraint videos_thumbnail_https check (thumbnail_url is null or thumbnail_url ~* '^https://')
+);
+create index if not exists videos_status_position_idx on public.videos(status, position);
+create index if not exists videos_collection_idx on public.videos(collection_id);
+create index if not exists videos_recipe_idx on public.videos(recipe_id);
+drop trigger if exists set_updated_at on public.videos;
+create trigger set_updated_at before update on public.videos
+  for each row execute function public.set_updated_at();
+alter table public.videos enable row level security;
+revoke all on public.videos from anon, authenticated;
+grant select, insert, update, delete on public.videos to authenticated;
+drop policy if exists "administradores gerenciam videos" on public.videos;
+create policy "administradores gerenciam videos" on public.videos
+  for all to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
+drop policy if exists "assinantes assistem videos publicados" on public.videos;
+create policy "assinantes assistem videos publicados" on public.videos
+  for select to authenticated using (status = 'published' and (select public.has_active_access()));
+insert into public.videos (slug, title, description, hls_url, status, position)
+values ('video-gumlet-demo','Vídeo de demonstração Gumlet','Vídeo inicial fornecido para configurar e testar o player. Revise o título e publique quando estiver pronto.','https://video.gumlet.io/6ad7bb851ab4445ed4e7f416/6ad7c30a1ab4445ed4e82f97/main.m3u8','draft',1)
+on conflict (slug) do nothing;
+commit;
+
+-- Sincronização do arquivo único: supabase/migrations/20261117130443_audit_video_library.sql
+-- Registra no histórico administrativo inclusões, alterações e arquivamentos da biblioteca de vídeos.
+create or replace function public.audit_video_changes()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' then
+    perform public.write_audit_log('videos.created', 'videos', new.id::text, new.title, null, to_jsonb(new));
+    return new;
+  elsif tg_op = 'UPDATE' then
+    perform public.write_audit_log('videos.updated', 'videos', new.id::text, new.title, to_jsonb(old), to_jsonb(new));
+    return new;
+  elsif tg_op = 'DELETE' then
+    perform public.write_audit_log('videos.deleted', 'videos', old.id::text, old.title, to_jsonb(old), null);
+    return old;
+  end if;
+  return null;
+end;
+$$;
+revoke all on function public.audit_video_changes() from public, anon, authenticated;
+drop trigger if exists audit_video_changes on public.videos;
+create trigger audit_video_changes after insert or update or delete on public.videos
+for each row execute function public.audit_video_changes();
+
+-- Sincronização do arquivo único: supabase/migrations/20261117130905_refine_video_rls_and_indexes.sql
+-- Consolida a política de leitura da biblioteca e indexa a chave estrangeira do criador.
+drop policy if exists "administradores gerenciam videos" on public.videos;
+drop policy if exists "assinantes assistem videos publicados" on public.videos;
+create policy "videos para administradores ou assinantes ativos" on public.videos
+for select to authenticated
+using ((select public.is_admin()) or (status = 'published' and (select public.has_active_access())));
+create policy "administradores inserem videos" on public.videos
+for insert to authenticated with check ((select public.is_admin()));
+create policy "administradores atualizam videos" on public.videos
+for update to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
+create policy "administradores removem videos" on public.videos
+for delete to authenticated using ((select public.is_admin()));
+create index if not exists videos_created_by_idx on public.videos(created_by);
