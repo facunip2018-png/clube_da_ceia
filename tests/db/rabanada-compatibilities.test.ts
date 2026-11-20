@@ -29,7 +29,7 @@ describe('compatibilidades documentadas das rabanadas', () => {
       select gen_random_uuid(), 'massa-pao-rabanada-doce', collection_id, source_document_id,
              'component', 'base', 'doce', 'Massa de pão para rabanada doce',
              original_language, translation_status, 8, 8, true,
-             content_state, status, position + 100
+             'catalogued', 'draft', position + 100
       from public.recipes
       where slug = 'pao-para-rabanada-doce'
     `);
@@ -43,7 +43,7 @@ describe('compatibilidades documentadas das rabanadas', () => {
       select gen_random_uuid(), 'massa-pao-rabanada-salgada', collection_id, source_document_id,
              'component', 'base', 'salgado', 'Massa de pão para rabanada salgada',
              original_language, translation_status, 9, 9, true,
-             content_state, status, position + 100
+             'catalogued', 'draft', position + 100
       from public.recipes
       where slug = 'pao-para-rabanada-salgada'
     `);
