@@ -24,21 +24,24 @@ jobs:
           cache: npm
       - name: Synchronize npm lockfile with package.json
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-      - name: Commit synchronized lockfile to the pull request branch
+      - name: Regenerate deterministic content artifacts
+        run: npm run content:build
+      - name: Commit synchronized lockfile and generated artifacts to the pull request branch
         if: github.event_name == 'pull_request'
         run: |
-          if ! git diff --quiet -- package-lock.json; then
+          files="package-lock.json src/server/demo-data.generated.json supabase/seed.sql supabase/setup_completo.sql"
+          if ! git diff --quiet -- $files; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add package-lock.json
-            git commit -m "chore: sincroniza package-lock com dependências"
+            git add $files
+            git commit -m "chore: sincroniza lockfile e artefatos de conteúdo"
             git push origin "HEAD:${GITHUB_HEAD_REF}"
           fi
       - name: Install dependencies from lockfile
         run: npm ci
       - name: TypeScript
         run: npm run typecheck
-      - name: Validate recipe content
+      - name: Validate generated content
         run: npm run content:check
       - name: Unit tests
         run: npm run test:unit
