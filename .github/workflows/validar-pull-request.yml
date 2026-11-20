@@ -1,0 +1,60 @@
+name: Validar código, banco e conteúdo
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/validar-pull-request.yml"
+      - "src/**"
+      - "tests/**"
+      - "supabase/migrations/**"
+      - "content/**"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/validar-pull-request.yml"
+      - "src/**"
+      - "tests/**"
+      - "supabase/migrations/**"
+      - "content/**"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: TypeScript, Vitest e integridade do conteúdo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Instalar dependências
+        # O package-lock atual ainda não registra pdf-lib e suas dependências transitivas.
+        # npm install resolve o manifesto e atualiza o lock no runner para executar as verificações.
+        run: npm install --no-audit --no-fund
+      - name: Gerar arquivos derivados do conteúdo versionado
+        run: npm run content:build
+      - name: Disponibilizar setup SQL gerado para conferência
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-completo-gerado
+          path: supabase/setup_completo.sql
+          if-no-files-found: error
+      - name: Verificar tipos
+        run: npm run typecheck
+      - name: Executar testes automatizados
+        run: npm test
+      - name: Validar conteúdo gerado
+        run: npm run content:check

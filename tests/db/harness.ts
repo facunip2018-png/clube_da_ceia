@@ -78,11 +78,29 @@ export class TestDb {
     return db;
   }
 
-  /** Banco criado pelo arquivo único (o mesmo que pode ser colado no SQL Editor do Supabase). */
+  /** Banco criado pelo arquivo único (o mesmo que pode ser colado no SQL Editor do Supabase).
+   * O arquivo é dividido apenas nos marcadores de migration para que o PGlite
+   * execute cada bloco na mesma ordem do SQL Editor e identifique a origem de
+   * qualquer falha sem alterar o SQL de cada seção.
+   */
   static async fromSetupFile(): Promise<TestDb> {
     const pg = new PGlite();
     await pg.exec(SUPABASE_SHIM);
-    await pg.exec(readFileSync(join(ROOT, 'supabase', 'setup_completo.sql'), 'utf8'));
+    const setup = readFileSync(join(ROOT, 'supabase', 'setup_completo.sql'), 'utf8');
+    const sections = [...setup.matchAll(/^-- >>>>>>>>>> (.+)$/gm)];
+    if (!sections.length) throw new Error('setup_completo.sql não contém marcadores de migrations.');
+    for (let index = 0; index < sections.length; index++) {
+      const marker = sections[index];
+      const start = marker.index! + marker[0].length;
+      const end = sections[index + 1]?.index ?? setup.length;
+      const sql = setup.slice(start, end).trim();
+      if (!sql) continue;
+      try {
+        await pg.exec(sql);
+      } catch (error) {
+        throw new Error(`Falha na seção ${marker[1]}: ${(error as Error).message}`);
+      }
+    }
     return new TestDb(pg);
   }
 
