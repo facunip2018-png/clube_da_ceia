@@ -5488,15 +5488,15 @@ begin
   end if;
 
   -- Alertas ainda não resolvidos em qualquer parte da composição impedem aprovação.
-  with recursive recipe_tree(id) as (
-    select new.id
-    union
-    select component.linked_recipe_id
-    from public.recipe_components component
-    join recipe_tree parent on parent.id = component.recipe_id
-    where component.linked_recipe_id is not null
-  )
   if exists (
+    with recursive recipe_tree(id) as (
+      select new.id
+      union
+      select component.linked_recipe_id
+      from public.recipe_components component
+      join recipe_tree parent on parent.id = component.recipe_id
+      where component.linked_recipe_id is not null
+    )
     select 1
     from public.review_flags flag
     where flag.recipe_id in (select id from recipe_tree)
