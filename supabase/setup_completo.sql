@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Clube da Ceia Perfeita — instalação completa do banco (GERADO)
 -- Cole este arquivo inteiro no SQL Editor do Supabase de um projeto NOVO e execute uma vez.
--- Conteúdo: 5 migrations + carga inicial (supabase/seed.sql).
+-- Conteúdo: 26 migrations + carga inicial (supabase/seed.sql).
 -- Para projetos que já rodaram as migrations, execute apenas supabase/seed.sql.
 -- =====================================================================
 
@@ -1589,6 +1589,3845 @@ create policy "capas: administradores removem"
 create policy "capas: administradores listam"
   on storage.objects for select to authenticated
   using (bucket_id = 'recipe-images' and (select public.is_admin()));
+
+-- >>>>>>>>>> migrations/20261112000000_simplify_recipe_publication.sql
+-- Publicação direta de receitas completas.
+-- A liberação não depende mais de aprovação, flags editoriais ou conferência manual.
+-- Mantém apenas a proteção para não publicar fichas sem ingredientes e etapas.
+create or replace function public.guard_recipe_status()
+returns trigger
+language plpgsql
+set search_path to ''
+as $function$
+begin
+  if new.status = 'published' and new.content_state <> 'structured' then
+    raise exception 'CONTENT_REQUIRED: a receita precisa ter ingredientes e modo de preparo cadastrados.' using errcode = 'P0001';
+  end if;
+
+  if new.status = 'published' and new.published_at is null then
+    new.published_at := now();
+  end if;
+
+  return new;
+end
+$function$;
+
+-- Libera imediatamente as fichas já estruturadas no catálogo.
+update public.recipes
+set status = 'published',
+    published_at = coalesce(published_at, now()),
+    updated_at = now()
+where content_state = 'structured'
+  and kind = 'recipe'
+  and status <> 'published'
+  and exists (select 1 from public.recipe_ingredients i where i.recipe_id = recipes.id)
+  and exists (select 1 from public.recipe_steps s where s.recipe_id = recipes.id);
+
+-- >>>>>>>>>> migrations/20261112150000_support_materials.sql
+-- Materiais de apoio compartilhados: utensílios, ingredientes básicos, dicas e orientações.
+create table if not exists public.support_materials (
+  id uuid primary key default gen_random_uuid(),
+  slug text not null unique,
+  kind text not null check (kind in ('utensilios', 'ingredientes', 'dicas', 'orientacoes')),
+  title text not null,
+  body text not null,
+  source_document_id uuid references public.source_documents(id) on delete set null,
+  source_page integer check (source_page is null or source_page > 0),
+  position integer not null default 0,
+  is_visible boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists support_materials_kind_position_idx
+  on public.support_materials (kind, position);
+
+alter table public.support_materials enable row level security;
+
+grant select, insert, update, delete on public.support_materials to authenticated;
+
+create policy "materiais de apoio para assinantes" on public.support_materials
+  for select to authenticated
+  using (
+    (select public.is_admin())
+    or ((select public.has_active_access()) and is_visible)
+  );
+
+create policy "administradores gerenciam materiais de apoio" on public.support_materials
+  for all to authenticated
+  using ((select public.is_admin()))
+  with check ((select public.is_admin()));
+
+create trigger set_updated_at
+  before update on public.support_materials
+  for each row execute function public.set_updated_at();
+
+create trigger audit_row_change
+  after insert or update or delete on public.support_materials
+  for each row execute function public.audit_row_change();
+
+-- >>>>>>>>>> migrations/20261112160000_allow_subscribers_download_source_pdfs.sql
+create or replace view public.source_document_refs as
+select
+  d.id,
+  d.title,
+  d.author,
+  d.publisher,
+  d.language,
+  d.file_name,
+  d.storage_path
+from public.source_documents d
+where exists (
+  select 1
+  from public.recipes r
+  where r.source_document_id = d.id
+    and r.status = 'published'
+);
+
+grant select on public.source_document_refs to anon, authenticated;
+
+drop policy if exists "pdfs originais: assinantes e administradores baixam" on storage.objects;
+create policy "pdfs originais: assinantes e administradores baixam"
+on storage.objects
+for select
+to authenticated
+using (
+  bucket_id = 'source-documents'
+  and coalesce((select public.my_access() ->> 'has_access'), 'false') = 'true'
+);
+
+-- >>>>>>>>>> migrations/20261112180000_automatic_pdf_recipe_import.sql
+create or replace function public.admin_import_pdf_recipes(p_document_id uuid, p_payload jsonb)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_doc public.source_documents%rowtype;
+  v_collection_id uuid;
+  v_collection_name text;
+  v_collection_slug text;
+  v_recipe jsonb;
+  v_ingredient jsonb;
+  v_step jsonb;
+  v_material jsonb;
+  v_recipe_id uuid;
+  v_ingredient_id uuid;
+  v_title text;
+  v_slug text;
+  v_base_slug text;
+  v_name text;
+  v_name_slug text;
+  v_position integer;
+  v_ingredient_position integer;
+  v_step_position integer;
+  v_created integer := 0;
+  v_skipped integer := 0;
+  v_materials integer := 0;
+  v_permission_ok boolean;
+begin
+  if not coalesce(public.is_admin(), false) then
+    raise exception 'Apenas administradores podem importar documentos.';
+  end if;
+
+  select * into v_doc
+  from public.source_documents
+  where id = p_document_id
+  for update;
+
+  if not found then
+    raise exception 'Documento não encontrado.';
+  end if;
+
+  if v_doc.storage_path is null or v_doc.file_status <> 'stored' then
+    raise exception 'Envie o PDF antes de iniciar a leitura.';
+  end if;
+
+  if jsonb_typeof(p_payload->'recipes') <> 'array' then
+    raise exception 'A leitura não retornou uma lista de receitas válida.';
+  end if;
+
+  v_collection_id := v_doc.collection_id;
+  v_collection_name := nullif(trim(p_payload#>>'{collection,name}'), '');
+
+  if v_collection_id is null and v_collection_name is not null then
+    v_collection_slug := trim(both '-' from regexp_replace(
+      lower(translate(v_collection_name,
+        'áàâãäéèêëíìîïóòôõöúùûüçñ',
+        'aaaaaeeeeiiiiooooouuuucn')),
+      '[^a-z0-9]+', '-', 'g'));
+    if v_collection_slug = '' then
+      v_collection_slug := 'colecao-' || substr(md5(v_collection_name), 1, 8);
+    end if;
+    insert into public.collections (slug, name, description, experience, position, is_visible)
+    values (
+      v_collection_slug,
+      v_collection_name,
+      nullif(trim(p_payload#>>'{collection,description}'), ''),
+      'catalog',
+      coalesce((select max(position) + 1 from public.collections), 0),
+      true
+    )
+    on conflict (slug) do update set name = excluded.name
+    returning id into v_collection_id;
+
+    update public.source_documents
+    set collection_id = v_collection_id
+    where id = p_document_id;
+  end if;
+
+  if v_collection_id is null then
+    raise exception 'Não foi possível identificar a categoria deste PDF.';
+  end if;
+
+  v_permission_ok := v_doc.commercial_permission = 'confirmed';
+  select coalesce(max(position), 0) + 1 into v_position
+  from public.recipes
+  where collection_id = v_collection_id;
+
+  for v_recipe in
+    select value from jsonb_array_elements(p_payload->'recipes')
+  loop
+    v_title := nullif(trim(v_recipe->>'title'), '');
+
+    if v_title is null
+       or jsonb_typeof(v_recipe->'ingredients') <> 'array'
+       or jsonb_array_length(v_recipe->'ingredients') = 0
+       or jsonb_typeof(v_recipe->'steps') <> 'array'
+       or jsonb_array_length(v_recipe->'steps') = 0 then
+      v_skipped := v_skipped + 1;
+      continue;
+    end if;
+
+    if exists (
+      select 1 from public.recipes
+      where source_document_id = p_document_id
+        and lower(title) = lower(v_title)
+        and status <> 'archived'
+    ) then
+      v_skipped := v_skipped + 1;
+      continue;
+    end if;
+
+    v_base_slug := trim(both '-' from regexp_replace(
+      lower(translate(v_title,
+        'áàâãäéèêëíìîïóòôõöúùûüçñ',
+        'aaaaaeeeeiiiiooooouuuucn')),
+      '[^a-z0-9]+', '-', 'g'));
+    if v_base_slug = '' then
+      v_base_slug := 'receita-' || substr(md5(v_title), 1, 8);
+    end if;
+    v_slug := v_base_slug;
+    while exists (select 1 from public.recipes where slug = v_slug) loop
+      v_slug := v_base_slug || '-' || substr(md5(v_title || clock_timestamp()::text), 1, 6);
+    end loop;
+
+    insert into public.recipes (
+      slug, collection_id, source_document_id, kind, title, original_title,
+      original_language, translation_status, description, difficulty,
+      yield_text, prep_minutes, cook_minutes, bake_minutes, chill_minutes,
+      rest_minutes, source_page_start, source_page_end, content_state,
+      status, position
+    ) values (
+      v_slug, v_collection_id, p_document_id, 'recipe', v_title,
+      nullif(trim(v_recipe->>'original_title'), ''),
+      coalesce(nullif(v_recipe->>'original_language', ''), 'pt-BR'),
+      case when coalesce(v_recipe->>'original_language', 'pt-BR') = 'pt-BR' then 'not_needed' else 'pending' end,
+      nullif(trim(v_recipe->>'description'), ''),
+      case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+      nullif(trim(v_recipe->>'yield_text'), ''),
+      nullif(v_recipe->>'prep_minutes','')::integer,
+      nullif(v_recipe->>'cook_minutes','')::integer,
+      nullif(v_recipe->>'bake_minutes','')::integer,
+      nullif(v_recipe->>'chill_minutes','')::integer,
+      nullif(v_recipe->>'rest_minutes','')::integer,
+      nullif(v_recipe->>'source_page_start','')::integer,
+      nullif(v_recipe->>'source_page_end','')::integer,
+      'structured', 'draft', v_position
+    ) returning id into v_recipe_id;
+
+    v_ingredient_position := 0;
+    for v_ingredient in select value from jsonb_array_elements(v_recipe->'ingredients')
+    loop
+      v_name := nullif(trim(v_ingredient->>'display_name'), '');
+      if v_name is null then
+        continue;
+      end if;
+      v_name_slug := trim(both '-' from regexp_replace(
+        lower(translate(v_name,
+          'áàâãäéèêëíìîïóòôõöúùûüçñ',
+          'aaaaaeeeeiiiiooooouuuucn')),
+        '[^a-z0-9]+', '-', 'g'));
+      if v_name_slug = '' then
+        v_name_slug := 'ingrediente-' || substr(md5(v_name), 1, 8);
+      end if;
+
+      insert into public.ingredients (slug, name)
+      values (v_name_slug, v_name)
+      on conflict (slug) do update set name = excluded.name
+      returning id into v_ingredient_id;
+
+      v_ingredient_position := v_ingredient_position + 1;
+      insert into public.recipe_ingredients (
+        recipe_id, ingredient_id, position, quantity, quantity_max, unit,
+        quantity_text, display_name, preparation, scaling, is_optional,
+        original_text, source_page, needs_review
+      ) values (
+        v_recipe_id, v_ingredient_id, v_ingredient_position,
+        nullif(v_ingredient->>'quantity','')::numeric,
+        nullif(v_ingredient->>'quantity_max','')::numeric,
+        nullif(trim(v_ingredient->>'unit'),''),
+        nullif(trim(v_ingredient->>'quantity_text'),''),
+        v_name,
+        nullif(trim(v_ingredient->>'preparation'),''),
+        'linear',
+        coalesce((v_ingredient->>'is_optional')::boolean, false),
+        coalesce(nullif(trim(v_ingredient->>'original_text'), ''), v_name),
+        nullif(v_ingredient->>'source_page','')::integer,
+        false
+      );
+    end loop;
+
+    v_step_position := 0;
+    for v_step in select value from jsonb_array_elements(v_recipe->'steps')
+    loop
+      if nullif(trim(v_step->>'instruction'), '') is null then
+        continue;
+      end if;
+      v_step_position := v_step_position + 1;
+      insert into public.recipe_steps (
+        recipe_id, position, instruction, original_text, tip, source_page, needs_review
+      ) values (
+        v_recipe_id, v_step_position,
+        trim(v_step->>'instruction'),
+        nullif(trim(v_step->>'original_text'), ''),
+        nullif(trim(v_step->>'tip'), ''),
+        nullif(v_step->>'source_page','')::integer,
+        false
+      );
+    end loop;
+
+    if v_ingredient_position = 0 or v_step_position = 0 then
+      delete from public.recipes where id = v_recipe_id;
+      v_skipped := v_skipped + 1;
+      continue;
+    end if;
+
+    if v_permission_ok then
+      update public.recipes
+      set status = 'published', published_at = now()
+      where id = v_recipe_id;
+    else
+      update public.recipes
+      set status = 'pending_permission'
+      where id = v_recipe_id;
+    end if;
+
+    v_created := v_created + 1;
+    v_position := v_position + 1;
+  end loop;
+
+  for v_material in
+    select value from jsonb_array_elements(coalesce(p_payload->'support_materials', '[]'::jsonb))
+  loop
+    if nullif(trim(v_material->>'title'), '') is null
+       or nullif(trim(v_material->>'body'), '') is null then
+      continue;
+    end if;
+    insert into public.support_materials (
+      slug, kind, title, body, source_document_id, source_page, position, is_visible
+    ) values (
+      'pdf-' || substr(md5(p_document_id::text || v_material->>'title' || coalesce(v_material->>'source_page','')),1,20),
+      case when v_material->>'kind' in ('utensilios','ingredientes','dicas','orientacoes') then v_material->>'kind' else 'orientacoes' end,
+      trim(v_material->>'title'),
+      trim(v_material->>'body'),
+      p_document_id,
+      nullif(v_material->>'source_page','')::integer,
+      coalesce((select max(position) + 1 from public.support_materials), 0),
+      true
+    )
+    on conflict (slug) do nothing;
+    if found then v_materials := v_materials + 1; end if;
+  end loop;
+
+  update public.source_documents
+  set import_notes = concat_ws(E'\n', nullif(import_notes, ''),
+      'Leitura automática em ' || to_char(now(), 'YYYY-MM-DD HH24:MI') ||
+      ': ' || v_created || ' receita(s) criada(s), ' || v_skipped ||
+      ' ignorada(s), ' || v_materials || ' material(is) de apoio.')
+  where id = p_document_id;
+
+  return jsonb_build_object(
+    'created', v_created,
+    'skipped', v_skipped,
+    'support_materials', v_materials,
+    'published', v_permission_ok
+  );
+end;
+$$;
+
+revoke all on function public.admin_import_pdf_recipes(uuid, jsonb) from public, anon;
+grant execute on function public.admin_import_pdf_recipes(uuid, jsonb) to authenticated;
+
+-- >>>>>>>>>> migrations/20261112193000_openrouter_secret_from_supabase_vault.sql
+create or replace function public.admin_get_openrouter_key()
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  secret_value text;
+begin
+  if auth.uid() is null or not public.is_admin() then
+    raise exception 'Acesso negado';
+  end if;
+
+  select decrypted_secret
+    into secret_value
+    from vault.decrypted_secrets
+   where name = 'openrouter_api_key'
+   limit 1;
+
+  return secret_value;
+end;
+$$;
+
+revoke all on function public.admin_get_openrouter_key() from public;
+revoke all on function public.admin_get_openrouter_key() from anon;
+grant execute on function public.admin_get_openrouter_key() to authenticated;
+
+-- >>>>>>>>>> migrations/20261112210000_extrair_texto_pdf_sem_ia.sql
+create table if not exists public.document_extracted_pages (
+  source_document_id uuid not null references public.source_documents(id) on delete cascade,
+  page_number integer not null check (page_number > 0),
+  page_text text not null default '',
+  extracted_at timestamptz not null default now(),
+  primary key (source_document_id, page_number)
+);
+
+alter table public.document_extracted_pages enable row level security;
+revoke all on public.document_extracted_pages from anon, authenticated;
+grant select, insert, update, delete on public.document_extracted_pages to authenticated;
+grant all on public.document_extracted_pages to service_role;
+
+create policy "administradores acessam texto extraido dos PDFs"
+  on public.document_extracted_pages
+  for all to authenticated
+  using ((select public.is_admin()))
+  with check ((select public.is_admin()));
+
+comment on table public.document_extracted_pages is
+  'Texto extraído localmente dos PDFs privados para revisão e cadastro administrativo, sem uso de serviços de IA.';
+
+-- >>>>>>>>>> migrations/20261113125253_complete_existing_pdf_recipe_placeholders.sql
+CREATE OR REPLACE FUNCTION public.admin_import_pdf_recipes(p_document_id uuid, p_payload jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_doc public.source_documents%rowtype;
+  v_collection_id uuid;
+  v_collection_name text;
+  v_collection_slug text;
+  v_recipe jsonb;
+  v_ingredient jsonb;
+  v_step jsonb;
+  v_material jsonb;
+  v_recipe_id uuid;
+  v_ingredient_id uuid;
+  v_title text;
+  v_slug text;
+  v_base_slug text;
+  v_name text;
+  v_name_slug text;
+  v_position integer;
+  v_ingredient_position integer;
+  v_step_position integer;
+  v_created integer := 0;
+  v_skipped integer := 0;
+  v_materials integer := 0;
+  v_permission_ok boolean;
+  v_existing_recipe_id uuid;
+  v_existing_recipe_empty boolean;
+begin
+  if not coalesce(public.is_admin(), false) then raise exception 'Apenas administradores podem importar documentos.'; end if;
+  select * into v_doc from public.source_documents where id = p_document_id for update;
+  if not found then raise exception 'Documento não encontrado.'; end if;
+  if v_doc.storage_path is null or v_doc.file_status <> 'stored' then raise exception 'Envie o PDF antes de iniciar a leitura.'; end if;
+  if jsonb_typeof(p_payload->'recipes') <> 'array' then raise exception 'A leitura não retornou uma lista de receitas válida.'; end if;
+
+  v_collection_id := v_doc.collection_id;
+  v_collection_name := nullif(trim(p_payload#>>'{collection,name}'), '');
+  if v_collection_id is null and v_collection_name is not null then
+    v_collection_slug := trim(both '-' from regexp_replace(lower(translate(v_collection_name,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+    if v_collection_slug = '' then v_collection_slug := 'colecao-' || substr(md5(v_collection_name),1,8); end if;
+    insert into public.collections (slug,name,description,experience,position,is_visible)
+    values (v_collection_slug,v_collection_name,nullif(trim(p_payload#>>'{collection,description}'),''),'catalog',coalesce((select max(position)+1 from public.collections),0),true)
+    on conflict (slug) do update set name=excluded.name returning id into v_collection_id;
+    update public.source_documents set collection_id=v_collection_id where id=p_document_id;
+  end if;
+  if v_collection_id is null then raise exception 'Não foi possível identificar a categoria deste PDF.'; end if;
+
+  v_permission_ok := v_doc.commercial_permission = 'confirmed';
+  select coalesce(max(position),0)+1 into v_position from public.recipes where collection_id=v_collection_id;
+
+  for v_recipe in select value from jsonb_array_elements(p_payload->'recipes') loop
+    v_title := nullif(trim(v_recipe->>'title'),'');
+    if v_title is null or jsonb_typeof(v_recipe->'ingredients') <> 'array' or jsonb_array_length(v_recipe->'ingredients')=0 or jsonb_typeof(v_recipe->'steps') <> 'array' or jsonb_array_length(v_recipe->'steps')=0 then
+      v_skipped:=v_skipped+1; continue;
+    end if;
+    v_existing_recipe_id:=null;
+    v_existing_recipe_empty:=false;
+    select id into v_existing_recipe_id
+      from public.recipes
+     where source_document_id=p_document_id
+       and lower(title)=lower(v_title)
+       and status<>'archived'
+     limit 1;
+
+    if v_existing_recipe_id is not null then
+      select
+        status='draft'
+        and content_state='catalogued'
+        and not exists(select 1 from public.recipe_ingredients where recipe_id=v_existing_recipe_id)
+        and not exists(select 1 from public.recipe_steps where recipe_id=v_existing_recipe_id)
+        into v_existing_recipe_empty
+        from public.recipes
+       where id=v_existing_recipe_id;
+
+      if not coalesce(v_existing_recipe_empty,false) then
+        v_skipped:=v_skipped+1;
+        continue;
+      end if;
+
+      -- Completa a ficha vazia já existente, preservando seu ID, slug e posição.
+      v_recipe_id:=v_existing_recipe_id;
+      update public.recipes
+         set original_title=nullif(trim(v_recipe->>'original_title'),''),
+             original_language=coalesce(nullif(v_recipe->>'original_language',''),'pt-BR'),
+             translation_status=case when coalesce(v_recipe->>'original_language','pt-BR')='pt-BR' then 'not_needed' else 'pending' end,
+             description=nullif(trim(v_recipe->>'description'),''),
+             difficulty=case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+             yield_text=nullif(trim(v_recipe->>'yield_text'),''),
+             prep_minutes=nullif(v_recipe->>'prep_minutes','')::integer,
+             cook_minutes=nullif(v_recipe->>'cook_minutes','')::integer,
+             bake_minutes=nullif(v_recipe->>'bake_minutes','')::integer,
+             chill_minutes=nullif(v_recipe->>'chill_minutes','')::integer,
+             rest_minutes=nullif(v_recipe->>'rest_minutes','')::integer,
+             source_page_start=nullif(v_recipe->>'source_page_start','')::integer,
+             source_page_end=nullif(v_recipe->>'source_page_end','')::integer,
+             content_state='structured'
+       where id=v_recipe_id;
+    else
+      v_base_slug:=trim(both '-' from regexp_replace(lower(translate(v_title,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+      if v_base_slug='' then v_base_slug:='receita-'||substr(md5(v_title),1,8); end if;
+      v_slug:=v_base_slug;
+      while exists(select 1 from public.recipes where slug=v_slug) loop v_slug:=v_base_slug||'-'||substr(md5(v_title||clock_timestamp()::text),1,6); end loop;
+
+      insert into public.recipes(slug,collection_id,source_document_id,kind,title,original_title,original_language,translation_status,description,difficulty,yield_text,prep_minutes,cook_minutes,bake_minutes,chill_minutes,rest_minutes,source_page_start,source_page_end,content_state,status,position)
+      values(v_slug,v_collection_id,p_document_id,'recipe',v_title,nullif(trim(v_recipe->>'original_title'),''),coalesce(nullif(v_recipe->>'original_language',''),'pt-BR'),
+        case when coalesce(v_recipe->>'original_language','pt-BR')='pt-BR' then 'not_needed' else 'pending' end,
+        nullif(trim(v_recipe->>'description'),''),case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+        nullif(trim(v_recipe->>'yield_text'),''),nullif(v_recipe->>'prep_minutes','')::integer,nullif(v_recipe->>'cook_minutes','')::integer,
+        nullif(v_recipe->>'bake_minutes','')::integer,nullif(v_recipe->>'chill_minutes','')::integer,nullif(v_recipe->>'rest_minutes','')::integer,
+        nullif(v_recipe->>'source_page_start','')::integer,nullif(v_recipe->>'source_page_end','')::integer,'structured','draft',v_position)
+      returning id into v_recipe_id;
+    end if;
+
+    v_ingredient_position:=0;
+    for v_ingredient in select value from jsonb_array_elements(v_recipe->'ingredients') loop
+      v_name:=nullif(trim(v_ingredient->>'display_name'),'');
+      if v_name is null then continue; end if;
+      v_name_slug:=trim(both '-' from regexp_replace(lower(translate(v_name,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+      if v_name_slug='' then v_name_slug:='ingrediente-'||substr(md5(v_name),1,8); end if;
+      insert into public.ingredients(slug,name) values(v_name_slug,v_name)
+      on conflict(slug) do update set name=excluded.name returning id into v_ingredient_id;
+      v_ingredient_position:=v_ingredient_position+1;
+      insert into public.recipe_ingredients(recipe_id,ingredient_id,position,quantity,quantity_max,unit,quantity_text,display_name,preparation,scaling,is_optional,original_text,source_page,needs_review)
+      values(v_recipe_id,v_ingredient_id,v_ingredient_position,nullif(v_ingredient->>'quantity','')::numeric,nullif(v_ingredient->>'quantity_max','')::numeric,
+        nullif(trim(v_ingredient->>'unit'),''),nullif(trim(v_ingredient->>'quantity_text'),''),v_name,nullif(trim(v_ingredient->>'preparation'),''),'linear',
+        coalesce((v_ingredient->>'is_optional')::boolean,false),coalesce(nullif(trim(v_ingredient->>'original_text'),''),v_name),nullif(v_ingredient->>'source_page','')::integer,false);
+    end loop;
+
+    v_step_position:=0;
+    for v_step in select value from jsonb_array_elements(v_recipe->'steps') loop
+      if nullif(trim(v_step->>'instruction'),'') is null then continue; end if;
+      v_step_position:=v_step_position+1;
+      insert into public.recipe_steps(recipe_id,position,instruction,original_text,tip,source_page,needs_review)
+      values(v_recipe_id,v_step_position,trim(v_step->>'instruction'),nullif(trim(v_step->>'original_text'),''),nullif(trim(v_step->>'tip'),''),nullif(v_step->>'source_page','')::integer,false);
+    end loop;
+
+    if v_ingredient_position=0 or v_step_position=0 then delete from public.recipes where id=v_recipe_id; v_skipped:=v_skipped+1; continue; end if;
+    if v_permission_ok then update public.recipes set status='published',published_at=now() where id=v_recipe_id;
+    else update public.recipes set status='pending_permission' where id=v_recipe_id; end if;
+    v_created:=v_created+1; v_position:=v_position+1;
+  end loop;
+
+  for v_material in select value from jsonb_array_elements(coalesce(p_payload->'support_materials','[]'::jsonb)) loop
+    if nullif(trim(v_material->>'title'),'') is null or nullif(trim(v_material->>'body'),'') is null then continue; end if;
+    insert into public.support_materials(slug,kind,title,body,source_document_id,source_page,position,is_visible)
+    values('pdf-'||substr(md5(p_document_id::text||v_material->>'title'||coalesce(v_material->>'source_page','')),1,20),
+      case when v_material->>'kind' in ('utensilios','ingredientes','dicas','orientacoes') then v_material->>'kind' else 'orientacoes' end,
+      trim(v_material->>'title'),trim(v_material->>'body'),p_document_id,nullif(v_material->>'source_page','')::integer,
+      coalesce((select max(position)+1 from public.support_materials),0),true)
+    on conflict(slug) do nothing;
+    if found then v_materials:=v_materials+1; end if;
+  end loop;
+
+  update public.source_documents set import_notes=concat_ws(E'\n',nullif(import_notes,''),'Leitura automática em '||to_char(now(),'YYYY-MM-DD HH24:MI')||': '||v_created||' receita(s) criada(s), '||v_skipped||' ignorada(s), '||v_materials||' material(is) de apoio.') where id=p_document_id;
+  return jsonb_build_object('created',v_created,'skipped',v_skipped,'support_materials',v_materials,'published',v_permission_ok);
+end;
+$function$
+
+-- >>>>>>>>>> migrations/20261114011648_fix_support_materials_slug_expression.sql
+-- Corrige a precedência dos operadores ao gerar o slug de materiais de apoio.
+-- Sem os parênteses, o PostgreSQL tentava aplicar ->> ao resultado de concatenação.
+CREATE OR REPLACE FUNCTION public.admin_import_pdf_recipes(p_document_id uuid, p_payload jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_doc public.source_documents%rowtype;
+  v_collection_id uuid;
+  v_collection_name text;
+  v_collection_slug text;
+  v_recipe jsonb;
+  v_ingredient jsonb;
+  v_step jsonb;
+  v_material jsonb;
+  v_recipe_id uuid;
+  v_ingredient_id uuid;
+  v_title text;
+  v_slug text;
+  v_base_slug text;
+  v_name text;
+  v_name_slug text;
+  v_position integer;
+  v_ingredient_position integer;
+  v_step_position integer;
+  v_created integer := 0;
+  v_skipped integer := 0;
+  v_materials integer := 0;
+  v_permission_ok boolean;
+  v_existing_recipe_id uuid;
+  v_existing_recipe_empty boolean;
+begin
+  if not coalesce(public.is_admin(), false) then raise exception 'Apenas administradores podem importar documentos.'; end if;
+  select * into v_doc from public.source_documents where id = p_document_id for update;
+  if not found then raise exception 'Documento não encontrado.'; end if;
+  if v_doc.storage_path is null or v_doc.file_status <> 'stored' then raise exception 'Envie o PDF antes de iniciar a leitura.'; end if;
+  if jsonb_typeof(p_payload->'recipes') <> 'array' then raise exception 'A leitura não retornou uma lista de receitas válida.'; end if;
+
+  v_collection_id := v_doc.collection_id;
+  v_collection_name := nullif(trim(p_payload#>>'{collection,name}'), '');
+  if v_collection_id is null and v_collection_name is not null then
+    v_collection_slug := trim(both '-' from regexp_replace(lower(translate(v_collection_name,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+    if v_collection_slug = '' then v_collection_slug := 'colecao-' || substr(md5(v_collection_name),1,8); end if;
+    insert into public.collections (slug,name,description,experience,position,is_visible)
+    values (v_collection_slug,v_collection_name,nullif(trim(p_payload#>>'{collection,description}'),''),'catalog',coalesce((select max(position)+1 from public.collections),0),true)
+    on conflict (slug) do update set name=excluded.name returning id into v_collection_id;
+    update public.source_documents set collection_id=v_collection_id where id=p_document_id;
+  end if;
+  if v_collection_id is null then raise exception 'Não foi possível identificar a categoria deste PDF.'; end if;
+
+  v_permission_ok := v_doc.commercial_permission = 'confirmed';
+  select coalesce(max(position),0)+1 into v_position from public.recipes where collection_id=v_collection_id;
+
+  for v_recipe in select value from jsonb_array_elements(p_payload->'recipes') loop
+    v_title := nullif(trim(v_recipe->>'title'),'');
+    if v_title is null or jsonb_typeof(v_recipe->'ingredients') <> 'array' or jsonb_array_length(v_recipe->'ingredients')=0 or jsonb_typeof(v_recipe->'steps') <> 'array' or jsonb_array_length(v_recipe->'steps')=0 then
+      v_skipped:=v_skipped+1; continue;
+    end if;
+    v_existing_recipe_id:=null;
+    v_existing_recipe_empty:=false;
+    select id into v_existing_recipe_id
+      from public.recipes
+     where source_document_id=p_document_id
+       and lower(title)=lower(v_title)
+       and status<>'archived'
+     limit 1;
+
+    if v_existing_recipe_id is not null then
+      select
+        status='draft'
+        and content_state='catalogued'
+        and not exists(select 1 from public.recipe_ingredients where recipe_id=v_existing_recipe_id)
+        and not exists(select 1 from public.recipe_steps where recipe_id=v_existing_recipe_id)
+        into v_existing_recipe_empty
+        from public.recipes
+       where id=v_existing_recipe_id;
+
+      if not coalesce(v_existing_recipe_empty,false) then
+        v_skipped:=v_skipped+1;
+        continue;
+      end if;
+
+      -- Completa a ficha vazia já existente, preservando seu ID, slug e posição.
+      v_recipe_id:=v_existing_recipe_id;
+      update public.recipes
+         set original_title=nullif(trim(v_recipe->>'original_title'),''),
+             original_language=coalesce(nullif(v_recipe->>'original_language',''),'pt-BR'),
+             translation_status=case when coalesce(v_recipe->>'original_language','pt-BR')='pt-BR' then 'not_needed' else 'pending' end,
+             description=nullif(trim(v_recipe->>'description'),''),
+             difficulty=case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+             yield_text=nullif(trim(v_recipe->>'yield_text'),''),
+             prep_minutes=nullif(v_recipe->>'prep_minutes','')::integer,
+             cook_minutes=nullif(v_recipe->>'cook_minutes','')::integer,
+             bake_minutes=nullif(v_recipe->>'bake_minutes','')::integer,
+             chill_minutes=nullif(v_recipe->>'chill_minutes','')::integer,
+             rest_minutes=nullif(v_recipe->>'rest_minutes','')::integer,
+             source_page_start=nullif(v_recipe->>'source_page_start','')::integer,
+             source_page_end=nullif(v_recipe->>'source_page_end','')::integer,
+             content_state='structured'
+       where id=v_recipe_id;
+    else
+      v_base_slug:=trim(both '-' from regexp_replace(lower(translate(v_title,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+      if v_base_slug='' then v_base_slug:='receita-'||substr(md5(v_title),1,8); end if;
+      v_slug:=v_base_slug;
+      while exists(select 1 from public.recipes where slug=v_slug) loop v_slug:=v_base_slug||'-'||substr(md5(v_title||clock_timestamp()::text),1,6); end loop;
+
+      insert into public.recipes(slug,collection_id,source_document_id,kind,title,original_title,original_language,translation_status,description,difficulty,yield_text,prep_minutes,cook_minutes,bake_minutes,chill_minutes,rest_minutes,source_page_start,source_page_end,content_state,status,position)
+      values(v_slug,v_collection_id,p_document_id,'recipe',v_title,nullif(trim(v_recipe->>'original_title'),''),coalesce(nullif(v_recipe->>'original_language',''),'pt-BR'),
+        case when coalesce(v_recipe->>'original_language','pt-BR')='pt-BR' then 'not_needed' else 'pending' end,
+        nullif(trim(v_recipe->>'description'),''),case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+        nullif(trim(v_recipe->>'yield_text'),''),nullif(v_recipe->>'prep_minutes','')::integer,nullif(v_recipe->>'cook_minutes','')::integer,
+        nullif(v_recipe->>'bake_minutes','')::integer,nullif(v_recipe->>'chill_minutes','')::integer,nullif(v_recipe->>'rest_minutes','')::integer,
+        nullif(v_recipe->>'source_page_start','')::integer,nullif(v_recipe->>'source_page_end','')::integer,'structured','draft',v_position)
+      returning id into v_recipe_id;
+    end if;
+
+    v_ingredient_position:=0;
+    for v_ingredient in select value from jsonb_array_elements(v_recipe->'ingredients') loop
+      v_name:=nullif(trim(v_ingredient->>'display_name'),'');
+      if v_name is null then continue; end if;
+      v_name_slug:=trim(both '-' from regexp_replace(lower(translate(v_name,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+      if v_name_slug='' then v_name_slug:='ingrediente-'||substr(md5(v_name),1,8); end if;
+      insert into public.ingredients(slug,name) values(v_name_slug,v_name)
+      on conflict(slug) do update set name=excluded.name returning id into v_ingredient_id;
+      v_ingredient_position:=v_ingredient_position+1;
+      insert into public.recipe_ingredients(recipe_id,ingredient_id,position,quantity,quantity_max,unit,quantity_text,display_name,preparation,scaling,is_optional,original_text,source_page,needs_review)
+      values(v_recipe_id,v_ingredient_id,v_ingredient_position,nullif(v_ingredient->>'quantity','')::numeric,nullif(v_ingredient->>'quantity_max','')::numeric,
+        nullif(trim(v_ingredient->>'unit'),''),nullif(trim(v_ingredient->>'quantity_text'),''),v_name,nullif(trim(v_ingredient->>'preparation'),''),'linear',
+        coalesce((v_ingredient->>'is_optional')::boolean,false),coalesce(nullif(trim(v_ingredient->>'original_text'),''),v_name),nullif(v_ingredient->>'source_page','')::integer,false);
+    end loop;
+
+    v_step_position:=0;
+    for v_step in select value from jsonb_array_elements(v_recipe->'steps') loop
+      if nullif(trim(v_step->>'instruction'),'') is null then continue; end if;
+      v_step_position:=v_step_position+1;
+      insert into public.recipe_steps(recipe_id,position,instruction,original_text,tip,source_page,needs_review)
+      values(v_recipe_id,v_step_position,trim(v_step->>'instruction'),nullif(trim(v_step->>'original_text'),''),nullif(trim(v_step->>'tip'),''),nullif(v_step->>'source_page','')::integer,false);
+    end loop;
+
+    if v_ingredient_position=0 or v_step_position=0 then delete from public.recipes where id=v_recipe_id; v_skipped:=v_skipped+1; continue; end if;
+    if v_permission_ok then update public.recipes set status='published',published_at=now() where id=v_recipe_id;
+    else update public.recipes set status='pending_permission' where id=v_recipe_id; end if;
+    v_created:=v_created+1; v_position:=v_position+1;
+  end loop;
+
+  for v_material in select value from jsonb_array_elements(coalesce(p_payload->'support_materials','[]'::jsonb)) loop
+    if nullif(trim(v_material->>'title'),'') is null or nullif(trim(v_material->>'body'),'') is null then continue; end if;
+    insert into public.support_materials(slug,kind,title,body,source_document_id,source_page,position,is_visible)
+    values('pdf-'||substr(md5(p_document_id::text || (v_material->>'title') || coalesce(v_material->>'source_page','')),1,20),
+      case when v_material->>'kind' in ('utensilios','ingredientes','dicas','orientacoes') then v_material->>'kind' else 'orientacoes' end,
+      trim(v_material->>'title'),trim(v_material->>'body'),p_document_id,nullif(v_material->>'source_page','')::integer,
+      coalesce((select max(position)+1 from public.support_materials),0),true)
+    on conflict(slug) do nothing;
+    if found then v_materials:=v_materials+1; end if;
+  end loop;
+
+  update public.source_documents set import_notes=concat_ws(E'\n',nullif(import_notes,''),'Leitura automática em '||to_char(now(),'YYYY-MM-DD HH24:MI')||': '||v_created||' receita(s) criada(s), '||v_skipped||' ignorada(s), '||v_materials||' material(is) de apoio.') where id=p_document_id;
+  return jsonb_build_object('created',v_created,'skipped',v_skipped,'support_materials',v_materials,'published',v_permission_ok);
+end;
+$function$
+
+-- >>>>>>>>>> migrations/20261114020000_structure_torta_de_chocolate.sql
+-- Registra a estruturação inicial da Torta de Chocolate.
+-- A receita já foi estruturada diretamente no banco; esta migração é idempotente
+-- para manter o mesmo estado em ambientes que ainda não receberam os dados.
+with target as (
+  select id
+  from public.recipes
+  where slug = 'torta-de-chocolate'
+    and source_page_start = 5
+    and source_page_end = 5
+),
+components_to_create(role, title, position) as (
+  values
+    ('massa'::text, 'Massa'::text, 1),
+    ('recheio'::text, 'Recheio'::text, 2),
+    ('cobertura'::text, 'Cobertura'::text, 3)
+),
+inserted as (
+  insert into public.recipe_components
+    (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+  select target.id, spec.role, spec.title, 1, spec.position, 5, 5
+  from target
+  cross join components_to_create spec
+  where not exists (
+    select 1
+    from public.recipe_components existing
+    where existing.recipe_id = target.id
+      and existing.position = spec.position
+  )
+  returning id
+)
+update public.recipe_ingredients ingredient
+set component_id = component.id,
+    updated_at = now()
+from target,
+     public.recipe_components component
+where ingredient.recipe_id = target.id
+  and component.recipe_id = target.id
+  and ingredient.component_id is null
+  and (
+    (component.role = 'massa' and ingredient.position between 1 and 2)
+    or (component.role = 'recheio' and ingredient.position between 3 and 5)
+    or (component.role = 'cobertura' and ingredient.position between 6 and 7)
+  );
+
+with target as (
+  select id
+  from public.recipes
+  where slug = 'torta-de-chocolate'
+    and source_page_start = 5
+    and source_page_end = 5
+)
+update public.recipe_steps step
+set component_id = component.id,
+    updated_at = now()
+from target,
+     public.recipe_components component
+where step.recipe_id = target.id
+  and component.recipe_id = target.id
+  and step.component_id is null
+  and (
+    (component.role = 'massa' and step.position = 1)
+    or (component.role = 'recheio' and step.position between 2 and 3)
+    or (component.role = 'cobertura' and step.position = 4)
+  );
+
+-- >>>>>>>>>> migrations/20261114021500_structure_tortas_components.sql
+-- Estrutura componentes de nove tortas com grupos e instruções explícitos nas páginas de origem.
+-- Idempotente: cria componentes ausentes e só associa registros ainda sem componente.
+begin;
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 6, 6
+from public.recipes rec
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 3;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 6, 6
+from public.recipes rec
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 4 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (4,5);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 6, 6
+from public.recipes rec
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 9 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (6);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 7, 7
+from public.recipes rec
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme', 1, 2, 7, 7
+from public.recipes rec
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme'
+  and ri.position between 3 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme'
+  and rs.position in (2,3,4);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 7, 7
+from public.recipes rec
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 10 and 13;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (5,6);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 8, 8
+from public.recipes rec
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 5;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2,3,6);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 8, 8
+from public.recipes rec
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 6 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (4,5);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 8, 8
+from public.recipes rec
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 9 and 10;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (7);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 10, 10
+from public.recipes rec
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 10, 10
+from public.recipes rec
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 7;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (3,4,5);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 12, 12
+from public.recipes rec
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Mousse de mel', 1, 2, 12, 12
+from public.recipes rec
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 13, 13
+from public.recipes rec
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio de manga', 1, 2, 13, 13
+from public.recipes rec
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (2,3,4,5);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 14, 14
+from public.recipes rec
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 14, 14
+from public.recipes rec
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 7;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de goiabada', 1, 3, 14, 14
+from public.recipes rec
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 8 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (4);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 15, 15
+from public.recipes rec
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio de nozes', 1, 2, 15, 15
+from public.recipes rec
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (3,4);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de chantilly', 1, 3, 15, 15
+from public.recipes rec
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 9 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (5);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 18, 18
+from public.recipes rec
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio de sorvete e café', 1, 2, 18, 18
+from public.recipes rec
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 4;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (3,4);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 18, 18
+from public.recipes rec
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 5 and 5;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (5);
+
+commit;
+
+-- >>>>>>>>>> migrations/20261114032000_structure_remaining_tortas.sql
+-- Completa a estrutura das tortas restantes com grupos sustentados pelas listas e instruções da apostila.
+-- Torta de Pêra permanece sem divisão: as instruções intercalam massa, recheio e montagem,
+-- e a visualização atual agrupa etapas por componente, o que alteraria a ordem original.
+begin;
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 9, 9
+from public.recipes rec
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 5;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 9, 9
+from public.recipes rec
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 6 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (4);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 9, 9
+from public.recipes rec
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 10 and 12;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (5,6,7);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme', 1, 1, 11, 11
+from public.recipes rec
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme'
+  and ri.position between 1 and 5;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme'
+  and rs.position in (1,2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem', 1, 2, 11, 11
+from public.recipes rec
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem'
+  and ri.position between 6 and 6;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem'
+  and rs.position in (4,5,6);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de chocolate', 1, 3, 11, 11
+from public.recipes rec
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 7 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (7,8);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Finalização', 1, 4, 11, 11
+from public.recipes rec
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=4);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='finalizacao'
+  and ri.position between 10 and 10;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao'
+  and rs.position in (9);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 16, 16
+from public.recipes rec
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 6;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 16, 16
+from public.recipes rec
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 7 and 11;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (2);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem', 1, 3, 16, 16
+from public.recipes rec
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem'
+  and rs.position in (3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 1, 19, 19
+from public.recipes rec
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 10 and 14;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 2, 19, 19
+from public.recipes rec
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 6;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 19, 19
+from public.recipes rec
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 7 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (4,5);
+
+commit;
+
+-- >>>>>>>>>> migrations/20261114033500_structure_torta_de_pera.sql
+-- Estrutura a Torta de Pêra sem alterar a sequência do preparo.
+-- As etapas intercaladas são separadas em partes sequenciais: massa, recheio,
+-- montagem e finalização. Os ingredientes são mantidos em suas listas originais.
+begin;
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select r.id, v.role, v.title, 1, v.position, 17, 17
+from public.recipes r
+cross join (values
+  ('massa'::text,'Massa'::text,1),
+  ('recheio'::text,'Recheio de pera'::text,2),
+  ('montagem'::text,'Montagem'::text,3),
+  ('finalizacao'::text,'Finalização'::text,4)
+) v(role,title,position)
+where r.slug='torta-de-pera' and r.source_page_start=17
+  and not exists (
+    select 1 from public.recipe_components rc
+    where rc.recipe_id=r.id and rc.position=v.position
+  );
+
+update public.recipe_ingredients i
+set component_id=rc.id, updated_at=now()
+from public.recipes r
+join public.recipe_components rc on rc.recipe_id=r.id
+where r.slug='torta-de-pera' and r.source_page_start=17
+  and i.recipe_id=r.id and i.component_id is null
+  and (
+    (rc.role='massa' and i.position between 1 and 5)
+    or (rc.role='finalizacao' and i.position between 6 and 8)
+    or (rc.role='recheio' and i.position between 9 and 15)
+  );
+
+update public.recipe_steps s
+set component_id=rc.id, updated_at=now()
+from public.recipes r
+join public.recipe_components rc on rc.recipe_id=r.id
+where r.slug='torta-de-pera' and r.source_page_start=17
+  and s.recipe_id=r.id and s.component_id is null
+  and (
+    (rc.role='massa' and s.position=1)
+    or (rc.role='recheio' and s.position in (2,3))
+    or (rc.role='montagem' and s.position in (4,5))
+    or (rc.role='finalizacao' and s.position=6)
+  );
+
+commit;
+
+-- >>>>>>>>>> migrations/20261114040000_structure_pudins_components.sql
+-- Estrutura as 13 fichas de pudins com caldas, massas, ganaches, coberturas e etapas na ordem da apostila.
+-- As caldas/coberturas citadas em materiais de apoio permanecem também na biblioteca de apoio.
+begin;
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa do pudim', 1, 1, 12, 12
+from public.recipes rec
+where rec.slug='pudim-tradicional' and rec.source_page_start=12
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-tradicional' and rec.source_page_start=12
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4,5]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-tradicional' and rec.source_page_start=12
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2,3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'calda', 'Calda e montagem', 1, 2, 12, 12
+from public.recipes rec
+where rec.slug='pudim-tradicional' and rec.source_page_start=12
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-tradicional' and rec.source_page_start=12
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='calda' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-tradicional' and rec.source_page_start=12
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='calda' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Cocção e finalização', 1, 3, 12, 12
+from public.recipes rec
+where rec.slug='pudim-tradicional' and rec.source_page_start=12
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-tradicional' and rec.source_page_start=12
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[5,6]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa do pudim de café', 1, 1, 13, 13
+from public.recipes rec
+where rec.slug='pudim-de-cafe' and rec.source_page_start=13
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-cafe' and rec.source_page_start=13
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4,5,6]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-cafe' and rec.source_page_start=13
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2,3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'calda', 'Calda e montagem', 1, 2, 13, 13
+from public.recipes rec
+where rec.slug='pudim-de-cafe' and rec.source_page_start=13
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-cafe' and rec.source_page_start=13
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='calda' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-cafe' and rec.source_page_start=13
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='calda' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Cocção e finalização', 1, 3, 13, 13
+from public.recipes rec
+where rec.slug='pudim-de-cafe' and rec.source_page_start=13
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-cafe' and rec.source_page_start=13
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[5,6,7]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa de chocolate', 1, 1, 14, 14
+from public.recipes rec
+where rec.slug='pudim-de-chocolate-meio-amargo' and rec.source_page_start=14
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-meio-amargo' and rec.source_page_start=14
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4,5,6,7]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-meio-amargo' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2,3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'calda', 'Calda de chocolate e montagem', 1, 2, 14, 14
+from public.recipes rec
+where rec.slug='pudim-de-chocolate-meio-amargo' and rec.source_page_start=14
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-meio-amargo' and rec.source_page_start=14
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='calda' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-meio-amargo' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='calda' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Cocção e finalização', 1, 3, 14, 14
+from public.recipes rec
+where rec.slug='pudim-de-chocolate-meio-amargo' and rec.source_page_start=14
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-meio-amargo' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[5,6,7]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa de coco', 1, 1, 15, 15
+from public.recipes rec
+where rec.slug='pudim-de-coco' and rec.source_page_start=15
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-coco' and rec.source_page_start=15
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4,5,6]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-coco' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2,3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'calda', 'Calda e montagem', 1, 2, 15, 15
+from public.recipes rec
+where rec.slug='pudim-de-coco' and rec.source_page_start=15
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-coco' and rec.source_page_start=15
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='calda' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-coco' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='calda' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Cocção e finalização', 1, 3, 15, 15
+from public.recipes rec
+where rec.slug='pudim-de-coco' and rec.source_page_start=15
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-coco' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[5,6]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa de doce de leite', 1, 1, 16, 16
+from public.recipes rec
+where rec.slug='pudim-de-doce-de-leite' and rec.source_page_start=16
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-doce-de-leite' and rec.source_page_start=16
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-doce-de-leite' and rec.source_page_start=16
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'calda', 'Calda e montagem', 1, 2, 16, 16
+from public.recipes rec
+where rec.slug='pudim-de-doce-de-leite' and rec.source_page_start=16
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-doce-de-leite' and rec.source_page_start=16
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='calda' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-doce-de-leite' and rec.source_page_start=16
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='calda' and rs.position = any(array[3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Cocção e finalização', 1, 3, 16, 16
+from public.recipes rec
+where rec.slug='pudim-de-doce-de-leite' and rec.source_page_start=16
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-doce-de-leite' and rec.source_page_start=16
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[4,5]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa de pistache', 1, 1, 17, 17
+from public.recipes rec
+where rec.slug='pudim-de-pistache' and rec.source_page_start=17
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-pistache' and rec.source_page_start=17
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4,5,6]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-pistache' and rec.source_page_start=17
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2,3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'calda', 'Calda e montagem', 1, 2, 17, 17
+from public.recipes rec
+where rec.slug='pudim-de-pistache' and rec.source_page_start=17
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-pistache' and rec.source_page_start=17
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='calda' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-pistache' and rec.source_page_start=17
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='calda' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Cocção e finalização', 1, 3, 17, 17
+from public.recipes rec
+where rec.slug='pudim-de-pistache' and rec.source_page_start=17
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-pistache' and rec.source_page_start=17
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[5,6]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'base', 'Preparação da forma', 1, 1, 18, 18
+from public.recipes rec
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='base' and ri.position = any(array[8]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='base' and rs.position = any(array[1]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Ganache de chocolate branco', 1, 2, 18, 18
+from public.recipes rec
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[3,7]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa do pudim', 1, 3, 18, 18
+from public.recipes rec
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,4,5,6]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[3,4,5]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Cocção e cobertura de morango', 1, 4, 18, 18
+from public.recipes rec
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=4);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='finalizacao' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-chocolate-branco-com-cobertura-de-doce-de-morango' and rec.source_page_start=18
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[6,7]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa de leite Ninho', 1, 1, 19, 19
+from public.recipes rec
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella' and rec.source_page_start=19
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella' and rec.source_page_start=19
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4,5,6]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella' and rec.source_page_start=19
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2,3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Preparação da forma', 1, 2, 19, 19
+from public.recipes rec
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella' and rec.source_page_start=19
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella' and rec.source_page_start=19
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Cocção e resfriamento', 1, 3, 19, 19
+from public.recipes rec
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella' and rec.source_page_start=19
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella' and rec.source_page_start=19
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[5]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de Nutella', 1, 4, 19, 19
+from public.recipes rec
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella' and rec.source_page_start=19
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=4);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella' and rec.source_page_start=19
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella' and rec.source_page_start=19
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura' and rs.position = any(array[6]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa Romeu e Julieta', 1, 1, 20, 20
+from public.recipes rec
+where rec.slug='pudim-romeu-e-julieta' and rec.source_page_start=20
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-romeu-e-julieta' and rec.source_page_start=20
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4,5,6,7]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-romeu-e-julieta' and rec.source_page_start=20
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Preparação da forma', 1, 2, 20, 20
+from public.recipes rec
+where rec.slug='pudim-romeu-e-julieta' and rec.source_page_start=20
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-romeu-e-julieta' and rec.source_page_start=20
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Cocção e resfriamento', 1, 3, 20, 20
+from public.recipes rec
+where rec.slug='pudim-romeu-e-julieta' and rec.source_page_start=20
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-romeu-e-julieta' and rec.source_page_start=20
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de goiabada', 1, 4, 20, 20
+from public.recipes rec
+where rec.slug='pudim-romeu-e-julieta' and rec.source_page_start=20
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=4);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-romeu-e-julieta' and rec.source_page_start=20
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-romeu-e-julieta' and rec.source_page_start=20
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura' and rs.position = any(array[5]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa de Ovomaltine', 1, 1, 21, 21
+from public.recipes rec
+where rec.slug='pudim-de-ovomaltine' and rec.source_page_start=21
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ovomaltine' and rec.source_page_start=21
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4,5,6,7]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ovomaltine' and rec.source_page_start=21
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2,3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'calda', 'Calda de chocolate e montagem', 1, 2, 21, 21
+from public.recipes rec
+where rec.slug='pudim-de-ovomaltine' and rec.source_page_start=21
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ovomaltine' and rec.source_page_start=21
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='calda' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ovomaltine' and rec.source_page_start=21
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='calda' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Cocção e finalização', 1, 3, 21, 21
+from public.recipes rec
+where rec.slug='pudim-de-ovomaltine' and rec.source_page_start=21
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ovomaltine' and rec.source_page_start=21
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[5,6]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa de leite Ninho', 1, 1, 22, 22
+from public.recipes rec
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella-sem-forno' and rec.source_page_start=22
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella-sem-forno' and rec.source_page_start=22
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4,5,6,7]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella-sem-forno' and rec.source_page_start=22
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2,3,4,5]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de Nutella', 1, 2, 22, 22
+from public.recipes rec
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella-sem-forno' and rec.source_page_start=22
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella-sem-forno' and rec.source_page_start=22
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-ninho-com-cobertura-de-nutella-sem-forno' and rec.source_page_start=22
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura' and rs.position = any(array[6]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa de coco diet', 1, 1, 23, 23
+from public.recipes rec
+where rec.slug='pudim-de-coco-diet' and rec.source_page_start=23
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-coco-diet' and rec.source_page_start=23
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4,5,6,7,8]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-coco-diet' and rec.source_page_start=23
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2,3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Calda de coco diet e finalização', 1, 2, 23, 23
+from public.recipes rec
+where rec.slug='pudim-de-coco-diet' and rec.source_page_start=23
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-coco-diet' and rec.source_page_start=23
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-de-coco-diet' and rec.source_page_start=23
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa do pudim diet', 1, 1, 24, 24
+from public.recipes rec
+where rec.slug='pudim-diet' and rec.source_page_start=24
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-diet' and rec.source_page_start=24
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[2,3,4,5,6]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-diet' and rec.source_page_start=24
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[1,2,3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'calda', 'Calda diet e montagem', 1, 2, 24, 24
+from public.recipes rec
+where rec.slug='pudim-diet' and rec.source_page_start=24
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-diet' and rec.source_page_start=24
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='calda' and ri.position = any(array[1]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-diet' and rec.source_page_start=24
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='calda' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Cocção e finalização', 1, 3, 24, 24
+from public.recipes rec
+where rec.slug='pudim-diet' and rec.source_page_start=24
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pudim-diet' and rec.source_page_start=24
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[5,6]);
+
+commit;
+
+-- >>>>>>>>>> migrations/20261114043000_structure_paves_components.sql
+-- Estrutura os 11 pavês antigos conforme camadas e preparos descritos no receituário original em espanhol.
+-- O Pavê Floresta Negra já estruturado fica intocado.
+begin;
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Cremes branco e de chocolate', 1, 1, 3, 3
+from public.recipes rec
+where rec.slug='pave-de-chocolate' and rec.source_page_start=3
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate' and rec.source_page_start=3
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[1,2,3,4,5,6,10]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate' and rec.source_page_start=3
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[1,2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem e camadas', 1, 2, 3, 3
+from public.recipes rec
+where rec.slug='pave-de-chocolate' and rec.source_page_start=3
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate' and rec.source_page_start=3
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem' and ri.position = any(array[7,8,9]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate' and rec.source_page_start=3
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[3,4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme base', 1, 1, 5, 5
+from public.recipes rec
+where rec.slug='pave-de-chocolate-bis' and rec.source_page_start=5
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate-bis' and rec.source_page_start=5
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[1,2,3,4]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate-bis' and rec.source_page_start=5
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[1]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Camada de BIS', 1, 2, 5, 5
+from public.recipes rec
+where rec.slug='pave-de-chocolate-bis' and rec.source_page_start=5
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate-bis' and rec.source_page_start=5
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem' and ri.position = any(array[5]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate-bis' and rec.source_page_start=5
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de merengue', 1, 3, 5, 5
+from public.recipes rec
+where rec.slug='pave-de-chocolate-bis' and rec.source_page_start=5
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate-bis' and rec.source_page_start=5
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura' and ri.position = any(array[6,7]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate-bis' and rec.source_page_start=5
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura' and rs.position = any(array[3,4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'base', 'Base de biscoito', 1, 1, 6, 6
+from public.recipes rec
+where rec.slug='pave-de-limao' and rec.source_page_start=6
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-limao' and rec.source_page_start=6
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='base' and ri.position = any(array[1,6]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-limao' and rec.source_page_start=6
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='base' and rs.position = any(array[1]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme de limão', 1, 2, 6, 6
+from public.recipes rec
+where rec.slug='pave-de-limao' and rec.source_page_start=6
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-limao' and rec.source_page_start=6
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[2,3,4]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-limao' and rec.source_page_start=6
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem e decoração', 1, 3, 6, 6
+from public.recipes rec
+where rec.slug='pave-de-limao' and rec.source_page_start=6
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-limao' and rec.source_page_start=6
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem' and ri.position = any(array[5]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-limao' and rec.source_page_start=6
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Resfriamento', 1, 4, 6, 6
+from public.recipes rec
+where rec.slug='pave-de-limao' and rec.source_page_start=6
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=4);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-limao' and rec.source_page_start=6
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme', 1, 1, 7, 7
+from public.recipes rec
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[1,2,3,4,5]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[1]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 2, 7, 7
+from public.recipes rec
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura' and ri.position = any(array[7,8,9,10]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura' and rs.position = any(array[2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Pão de ló', 1, 3, 7, 7
+from public.recipes rec
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa' and ri.position = any(array[11,12,13,14]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa' and rs.position = any(array[3,4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem', 1, 4, 7, 7
+from public.recipes rec
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=4);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem' and ri.position = any(array[6,15]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-pessego' and rec.source_page_start=7
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[5,6]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Abacaxi caramelizado', 1, 1, 9, 9
+from public.recipes rec
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio' and ri.position = any(array[1,2]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio' and rs.position = any(array[1]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme', 1, 2, 9, 9
+from public.recipes rec
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[3,4,7]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de claras', 1, 3, 9, 9
+from public.recipes rec
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura' and ri.position = any(array[5,6]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura' and rs.position = any(array[3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem e finalização', 1, 4, 9, 9
+from public.recipes rec
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=4);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem' and ri.position = any(array[8]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-abacaxi' and rec.source_page_start=9
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[4,5]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme de maracujá', 1, 1, 10, 10
+from public.recipes rec
+where rec.slug='pave-de-maracuja-e-chocolate' and rec.source_page_start=10
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-maracuja-e-chocolate' and rec.source_page_start=10
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[1,2,3,7]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-maracuja-e-chocolate' and rec.source_page_start=10
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[1,2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de chocolate', 1, 2, 10, 10
+from public.recipes rec
+where rec.slug='pave-de-maracuja-e-chocolate' and rec.source_page_start=10
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-maracuja-e-chocolate' and rec.source_page_start=10
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura' and ri.position = any(array[5,6,9]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-maracuja-e-chocolate' and rec.source_page_start=10
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura' and rs.position = any(array[3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem', 1, 3, 10, 10
+from public.recipes rec
+where rec.slug='pave-de-maracuja-e-chocolate' and rec.source_page_start=10
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-maracuja-e-chocolate' and rec.source_page_start=10
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem' and ri.position = any(array[4,8]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-maracuja-e-chocolate' and rec.source_page_start=10
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[4,5]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'base', 'Camada de uvas', 1, 1, 11, 11
+from public.recipes rec
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='base' and ri.position = any(array[1,2]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='base' and rs.position = any(array[1]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme de baunilha', 1, 2, 11, 11
+from public.recipes rec
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[3,4,5,6]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Trufa de chocolate', 1, 3, 11, 11
+from public.recipes rec
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura' and ri.position = any(array[7,8]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura' and rs.position = any(array[3,4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Chantilly e decoração', 1, 4, 11, 11
+from public.recipes rec
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=4);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='finalizacao' and ri.position = any(array[9,10,11]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-uva-chocolate-e-chantilly' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[5,6]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme de doce de leite', 1, 1, 13, 13
+from public.recipes rec
+where rec.slug='pave-de-amendoim' and rec.source_page_start=13
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-amendoim' and rec.source_page_start=13
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[2,3]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-amendoim' and rec.source_page_start=13
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[1]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem com biscoitos e amendoim', 1, 2, 13, 13
+from public.recipes rec
+where rec.slug='pave-de-amendoim' and rec.source_page_start=13
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-amendoim' and rec.source_page_start=13
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem' and ri.position = any(array[1,4]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-amendoim' and rec.source_page_start=13
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Resfriamento', 1, 3, 13, 13
+from public.recipes rec
+where rec.slug='pave-de-amendoim' and rec.source_page_start=13
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-amendoim' and rec.source_page_start=13
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme de ameixa', 1, 1, 14, 14
+from public.recipes rec
+where rec.slug='pave-de-ameixa' and rec.source_page_start=14
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-ameixa' and rec.source_page_start=14
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[1,2,3,4,5,6]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-ameixa' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[1]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem com biscoitos', 1, 2, 14, 14
+from public.recipes rec
+where rec.slug='pave-de-ameixa' and rec.source_page_start=14
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-ameixa' and rec.source_page_start=14
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem' and ri.position = any(array[7,8]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-ameixa' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[2,3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Resfriamento', 1, 3, 14, 14
+from public.recipes rec
+where rec.slug='pave-de-ameixa' and rec.source_page_start=14
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-ameixa' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao' and rs.position = any(array[4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme de café e chocolate', 1, 1, 15, 15
+from public.recipes rec
+where rec.slug='pave-de-cafe' and rec.source_page_start=15
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-cafe' and rec.source_page_start=15
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[1,2,3,5,6]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-cafe' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[1]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Claras com creme de leite', 1, 2, 15, 15
+from public.recipes rec
+where rec.slug='pave-de-cafe' and rec.source_page_start=15
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-cafe' and rec.source_page_start=15
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura' and ri.position = any(array[7]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-cafe' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura' and rs.position = any(array[2]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem e finalização', 1, 3, 15, 15
+from public.recipes rec
+where rec.slug='pave-de-cafe' and rec.source_page_start=15
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-cafe' and rec.source_page_start=15
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem' and ri.position = any(array[4]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-cafe' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[3,4]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme de chocolate branco', 1, 1, 16, 16
+from public.recipes rec
+where rec.slug='pave-de-chocolate-branco' and rec.source_page_start=16
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate-branco' and rec.source_page_start=16
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme' and ri.position = any(array[1,2,3,4,5]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate-branco' and rec.source_page_start=16
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme' and rs.position = any(array[1,2,3]);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem e decoração', 1, 2, 16, 16
+from public.recipes rec
+where rec.slug='pave-de-chocolate-branco' and rec.source_page_start=16
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate-branco' and rec.source_page_start=16
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem' and ri.position = any(array[6,7]);
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='pave-de-chocolate-branco' and rec.source_page_start=16
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem' and rs.position = any(array[4,5]);
+
+commit;
+
+-- >>>>>>>>>> migrations/20261114044500_preserve_torta_ameixa_step_order.sql
+-- Preserva a sequência original da Torta de Ameixa com Nozes no modo cozinheiro.
+-- O fechamento da massa e a ida ao forno acontecem depois do recheio e antes da cobertura.
+begin;
+
+update public.recipe_components rc
+set position=4, updated_at=now()
+from public.recipes r
+where rc.recipe_id=r.id
+  and r.slug='torta-de-ameixa-com-nozes'
+  and rc.role='cobertura'
+  and rc.position=3;
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select r.id,'montagem','Fechamento e forno',1,3,8,8
+from public.recipes r
+where r.slug='torta-de-ameixa-com-nozes' and r.source_page_start=8
+  and not exists (
+    select 1 from public.recipe_components rc
+    where rc.recipe_id=r.id and rc.position=3
+  );
+
+update public.recipe_steps s
+set component_id=rc.id, updated_at=now()
+from public.recipes r
+join public.recipe_components rc on rc.recipe_id=r.id
+where r.slug='torta-de-ameixa-com-nozes'
+  and s.recipe_id=r.id
+  and s.position=6
+  and s.component_id is not null
+  and rc.role='montagem'
+  and rc.position=3;
+
+commit;
+
+-- >>>>>>>>>> migrations/20261115024743_structure_manjar_de_coco_recipes.sql
+-- Fichas estruturadas das 9 receitas de Manjar de Coco, transcritas das páginas extraídas do PDF.
+-- A migração usa slugs e posições; não depende de IDs gerados previamente.
+begin;
+update public.source_documents set title='9 Receitas de Manjar',publisher='Guia da Cozinha',page_count=9,
+ import_notes=concat_ws(E'\n',nullif(import_notes,''),'Texto extraído nas 9 páginas; 9 receitas estruturadas por componente com base no conteúdo original.')
+where slug='manjar-de-coco';
+
+with d as (
+ select * from jsonb_to_recordset($data$[{"slug":"manjar-de-coco-com-frutas-vermelhas","title":"Manjar de coco com frutas vermelhas","position":1,"difficulty":"facil","yield_text":"8 porções","yield_unit":"porção","description":"Manjar de coco acompanhado de calda de frutas vermelhas.","prep_minutes":45,"chill_minutes":180,"yield_quantity":8,"source_page_end":1,"source_page_start":1,"yield_unit_plural":"porções"},{"slug":"manjar-de-milho-com-calda-de-canela","title":"Manjar de milho com calda de canela","position":2,"difficulty":"facil","yield_text":"8 porções","yield_unit":"porção","description":"Manjar de milho verde servido com calda de canela.","prep_minutes":40,"chill_minutes":240,"yield_quantity":8,"source_page_end":2,"source_page_start":2,"yield_unit_plural":"porções"},{"slug":"manjar-com-calda-de-chocolate","title":"Manjar com calda de chocolate","position":3,"difficulty":"facil","yield_text":"6 porções","yield_unit":"porção","description":"Manjar de coco com calda de chocolate ao leite.","prep_minutes":40,"chill_minutes":240,"yield_quantity":6,"source_page_end":3,"source_page_start":2,"yield_unit_plural":"porções"},{"slug":"manjar-de-doce-de-leite-e-ameixa","title":"Manjar de doce de leite e ameixa","position":4,"difficulty":"facil","yield_text":"8 porções","yield_unit":"porção","description":"Manjar de doce de leite com calda de ameixas.","prep_minutes":45,"chill_minutes":120,"yield_quantity":8,"source_page_end":4,"source_page_start":4,"yield_unit_plural":"porções"},{"slug":"manjar-de-morango-com-calda-de-chocolate","title":"Manjar de morango com calda de chocolate","position":5,"difficulty":"facil","yield_text":"8 porções","yield_unit":"porção","description":"Manjar de morango com calda de chocolate e geleia.","prep_minutes":30,"chill_minutes":180,"yield_quantity":8,"source_page_end":5,"source_page_start":5,"yield_unit_plural":"porções"},{"slug":"manjar-branco-especial","title":"Manjar branco especial","position":6,"difficulty":"facil","yield_text":"10 porções","yield_unit":"porção","description":"Manjar branco com calda de ameixas, vinho tinto e especiarias.","prep_minutes":30,"chill_minutes":240,"yield_quantity":10,"source_page_end":6,"source_page_start":6,"yield_unit_plural":"porções"},{"slug":"manjar-de-tapioca","title":"Manjar de tapioca","position":7,"difficulty":"facil","yield_text":"8 porções","yield_unit":"porção","description":"Manjar de tapioca granulada com coco e leite condensado.","prep_minutes":30,"chill_minutes":120,"yield_quantity":8,"source_page_end":7,"source_page_start":7,"yield_unit_plural":"porções"},{"slug":"manjar-de-nutella","title":"Manjar de Nutella","position":8,"difficulty":"facil","yield_text":"10 porções","yield_unit":"porção","description":"Manjar cremoso de Nutella® com calda de Nutella® e creme de leite.","prep_minutes":40,"chill_minutes":300,"yield_quantity":10,"source_page_end":8,"source_page_start":8,"yield_unit_plural":"porções"},{"slug":"manjar-ouro-branco","title":"Manjar Ouro Branco","position":9,"difficulty":"facil","yield_text":"10 porções","yield_unit":"porção","description":"Manjar de leite de coco com creme de leite e bombons Ouro Branco®, servido com calda.","prep_minutes":45,"chill_minutes":240,"yield_quantity":10,"source_page_end":9,"source_page_start":8,"yield_unit_plural":"porções"}]$data$::jsonb)
+ as x(slug text,title text,description text,difficulty text,yield_quantity numeric,yield_unit text,yield_unit_plural text,yield_text text,prep_minutes int,chill_minutes int,source_page_start int,source_page_end int,position int)
+)
+insert into public.recipes
+(slug,collection_id,source_document_id,kind,title,original_title,original_language,translation_status,description,difficulty,
+ yield_quantity,yield_unit,yield_unit_plural,yield_text,prep_minutes,chill_minutes,source_page_start,source_page_end,page_ref_verified,
+ content_state,status,position,published_at)
+select d.slug,col.id,doc.id,'recipe',d.title,d.title,'pt-BR','not_needed',d.description,d.difficulty,
+ d.yield_quantity,d.yield_unit,d.yield_unit_plural,d.yield_text,d.prep_minutes,d.chill_minutes,d.source_page_start,d.source_page_end,true,
+ 'structured','published',d.position,now()
+from d join public.collections col on col.slug='manjar-de-coco'
+join public.source_documents doc on doc.slug='manjar-de-coco'
+on conflict(slug) do update set
+ collection_id=excluded.collection_id,source_document_id=excluded.source_document_id,title=excluded.title,
+ original_title=excluded.original_title,description=excluded.description,difficulty=excluded.difficulty,
+ yield_quantity=excluded.yield_quantity,yield_unit=excluded.yield_unit,yield_unit_plural=excluded.yield_unit_plural,
+ yield_text=excluded.yield_text,prep_minutes=excluded.prep_minutes,chill_minutes=excluded.chill_minutes,
+ source_page_start=excluded.source_page_start,source_page_end=excluded.source_page_end,page_ref_verified=true,
+ content_state='structured',status='published',position=excluded.position,published_at=coalesce(public.recipes.published_at,now()),updated_at=now();
+
+with d as (
+ select * from jsonb_to_recordset($data$[{"role":"massa","slug":"manjar-de-coco-com-frutas-vermelhas","title":"Manjar de coco","position":1,"source_page_end":1,"source_page_start":1},{"role":"calda","slug":"manjar-de-coco-com-frutas-vermelhas","title":"Calda de frutas vermelhas","position":2,"source_page_end":1,"source_page_start":1},{"role":"finalizacao","slug":"manjar-de-coco-com-frutas-vermelhas","title":"Finalização","position":3,"source_page_end":1,"source_page_start":1},{"role":"massa","slug":"manjar-de-milho-com-calda-de-canela","title":"Manjar de milho","position":1,"source_page_end":2,"source_page_start":2},{"role":"calda","slug":"manjar-de-milho-com-calda-de-canela","title":"Calda de canela","position":2,"source_page_end":2,"source_page_start":2},{"role":"finalizacao","slug":"manjar-de-milho-com-calda-de-canela","title":"Finalização","position":3,"source_page_end":2,"source_page_start":2},{"role":"massa","slug":"manjar-com-calda-de-chocolate","title":"Manjar","position":1,"source_page_end":3,"source_page_start":3},{"role":"calda","slug":"manjar-com-calda-de-chocolate","title":"Calda de chocolate","position":2,"source_page_end":3,"source_page_start":3},{"role":"finalizacao","slug":"manjar-com-calda-de-chocolate","title":"Finalização","position":3,"source_page_end":3,"source_page_start":3},{"role":"calda","slug":"manjar-de-doce-de-leite-e-ameixa","title":"Calda de ameixa","position":1,"source_page_end":4,"source_page_start":4},{"role":"massa","slug":"manjar-de-doce-de-leite-e-ameixa","title":"Manjar de doce de leite","position":2,"source_page_end":4,"source_page_start":4},{"role":"finalizacao","slug":"manjar-de-doce-de-leite-e-ameixa","title":"Finalização","position":3,"source_page_end":4,"source_page_start":4},{"role":"massa","slug":"manjar-de-morango-com-calda-de-chocolate","title":"Manjar de morango","position":1,"source_page_end":5,"source_page_start":5},{"role":"calda","slug":"manjar-de-morango-com-calda-de-chocolate","title":"Calda de chocolate","position":2,"source_page_end":5,"source_page_start":5},{"role":"finalizacao","slug":"manjar-de-morango-com-calda-de-chocolate","title":"Decoração e finalização","position":3,"source_page_end":5,"source_page_start":5},{"role":"massa","slug":"manjar-branco-especial","title":"Manjar branco","position":1,"source_page_end":6,"source_page_start":6},{"role":"calda","slug":"manjar-branco-especial","title":"Calda de ameixas","position":2,"source_page_end":6,"source_page_start":6},{"role":"finalizacao","slug":"manjar-branco-especial","title":"Finalização","position":3,"source_page_end":6,"source_page_start":6},{"role":"massa","slug":"manjar-de-tapioca","title":"Manjar de tapioca","position":1,"source_page_end":7,"source_page_start":7},{"role":"finalizacao","slug":"manjar-de-tapioca","title":"Finalização","position":2,"source_page_end":7,"source_page_start":7},{"role":"massa","slug":"manjar-de-nutella","title":"Manjar de Nutella","position":1,"source_page_end":8,"source_page_start":8},{"role":"calda","slug":"manjar-de-nutella","title":"Calda de Nutella","position":2,"source_page_end":8,"source_page_start":8},{"role":"finalizacao","slug":"manjar-de-nutella","title":"Finalização","position":3,"source_page_end":8,"source_page_start":8},{"role":"calda","slug":"manjar-ouro-branco","title":"Calda de chocolate","position":1,"source_page_end":8,"source_page_start":8},{"role":"massa","slug":"manjar-ouro-branco","title":"Manjar Ouro Branco","position":2,"source_page_end":8,"source_page_start":8},{"role":"finalizacao","slug":"manjar-ouro-branco","title":"Decoração e finalização","position":3,"source_page_end":8,"source_page_start":8}]$data$::jsonb)
+ as x(slug text,title text,role text,position int,source_page_start int,source_page_end int)
+)
+insert into public.recipe_components(recipe_id,role,title,multiplier,position,source_page_start,source_page_end)
+select r.id,d.role,d.title,1,d.position,d.source_page_start,d.source_page_end
+from d join public.recipes r on r.slug=d.slug
+where not exists(select 1 from public.recipe_components c where c.recipe_id=r.id and c.position=d.position);
+
+with d as (
+ select * from jsonb_to_recordset($data$[{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":"litro","scaling":"linear","position":1,"quantity":1,"is_optional":false,"display_name":"leite","original_text":"1 litro leite","quantity_text":null,"component_title":"Manjar de coco"},{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":"vidro","scaling":"linear","position":2,"quantity":1,"is_optional":false,"display_name":"leite de coco (200ml)","original_text":"1 vidro leite de coco (200ml)","quantity_text":null,"component_title":"Manjar de coco"},{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":"lata","scaling":"linear","position":3,"quantity":1,"is_optional":false,"display_name":"leite condensado","original_text":"1 lata leite condensado","quantity_text":null,"component_title":"Manjar de coco"},{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":"g","scaling":"linear","position":4,"quantity":100,"is_optional":false,"display_name":"coco ralado","original_text":"100 g coco ralado","quantity_text":null,"component_title":"Manjar de coco"},{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":"colheres (sopa)","scaling":"linear","position":5,"quantity":7,"is_optional":false,"display_name":"maisena","original_text":"7 colheres (sopa) maisena","quantity_text":null,"component_title":"Manjar de coco"},{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":"colheres (sopa)","scaling":"linear","position":6,"quantity":4,"is_optional":false,"display_name":"açúcar","original_text":"4 colheres (sopa) açúcar","quantity_text":null,"component_title":"Manjar de coco"},{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":null,"scaling":"linear","position":7,"quantity":null,"is_optional":false,"display_name":"óleo","original_text":"óleo para untar","quantity_text":"para untar","component_title":"Manjar de coco"},{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":"xícaras (chá)","scaling":"linear","position":1,"quantity":2,"is_optional":false,"display_name":"frutas vermelhas (morango, framboesa e amora)","original_text":"2 xícaras (chá) frutas vermelhas (morango, framboesa e amora)","quantity_text":null,"component_title":"Calda de frutas vermelhas"},{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":"xícara (chá)","scaling":"linear","position":2,"quantity":0.5,"is_optional":false,"display_name":"açúcar","original_text":"0.5 xícara (chá) açúcar","quantity_text":null,"component_title":"Calda de frutas vermelhas"},{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":"colher (sopa)","scaling":"linear","position":3,"quantity":1,"is_optional":false,"display_name":"suco de limão","original_text":"1 colher (sopa) suco de limão","quantity_text":null,"component_title":"Calda de frutas vermelhas"},{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":"gotas","scaling":"linear","position":4,"quantity":2,"is_optional":false,"display_name":"corante em gel vermelho","original_text":"2 gotas corante em gel vermelho","quantity_text":null,"component_title":"Calda de frutas vermelhas"},{"slug":"manjar-de-coco-com-frutas-vermelhas","unit":null,"scaling":"linear","position":1,"quantity":null,"is_optional":false,"display_name":"frutas vermelhas","original_text":"frutas vermelhas para decorar","quantity_text":"para decorar","component_title":"Finalização"},{"slug":"manjar-de-milho-com-calda-de-canela","unit":"latas","scaling":"linear","position":1,"quantity":2,"is_optional":false,"display_name":"milho verde escorrido","original_text":"2 latas milho verde escorrido","quantity_text":null,"component_title":"Manjar de milho"},{"slug":"manjar-de-milho-com-calda-de-canela","unit":"lata","scaling":"linear","position":2,"quantity":1,"is_optional":false,"display_name":"leite condensado","original_text":"1 lata leite condensado","quantity_text":null,"component_title":"Manjar de milho"},{"slug":"manjar-de-milho-com-calda-de-canela","unit":"xícaras (chá)","scaling":"linear","position":3,"quantity":2,"is_optional":false,"display_name":"leite","original_text":"2 xícaras (chá) leite","quantity_text":null,"component_title":"Manjar de milho"},{"slug":"manjar-de-milho-com-calda-de-canela","unit":"colheres (sopa)","scaling":"linear","position":4,"quantity":3,"is_optional":false,"display_name":"maisena","original_text":"3 colheres (sopa) maisena","quantity_text":null,"component_title":"Manjar de milho"},{"slug":"manjar-de-milho-com-calda-de-canela","unit":"unidades","scaling":"linear","position":5,"quantity":2,"is_optional":false,"display_name":"gemas","original_text":"2 unidades gemas","quantity_text":null,"component_title":"Manjar de milho"},{"slug":"manjar-de-milho-com-calda-de-canela","unit":"xícara (chá)","scaling":"linear","position":1,"quantity":1,"is_optional":false,"display_name":"açúcar","original_text":"1 xícara (chá) açúcar","quantity_text":null,"component_title":"Calda de canela"},{"slug":"manjar-de-milho-com-calda-de-canela","unit":"colher (sopa)","scaling":"linear","position":2,"quantity":1,"is_optional":false,"display_name":"manteiga","original_text":"1 colher (sopa) manteiga","quantity_text":null,"component_title":"Calda de canela"},{"slug":"manjar-de-milho-com-calda-de-canela","unit":"unidade","scaling":"linear","position":3,"quantity":1,"is_optional":false,"display_name":"canela em pau","original_text":"1 unidade canela em pau","quantity_text":null,"component_title":"Calda de canela"},{"slug":"manjar-de-milho-com-calda-de-canela","unit":"xícara (chá)","scaling":"linear","position":4,"quantity":0.5,"is_optional":false,"display_name":"água","original_text":"0.5 xícara (chá) água","quantity_text":null,"component_title":"Calda de canela"},{"slug":"manjar-com-calda-de-chocolate","unit":"colheres (sopa)","scaling":"linear","position":1,"quantity":7,"is_optional":false,"display_name":"maisena","original_text":"7 colheres (sopa) maisena","quantity_text":null,"component_title":"Manjar"},{"slug":"manjar-com-calda-de-chocolate","unit":"xícaras (chá)","scaling":"linear","position":2,"quantity":3.5,"is_optional":false,"display_name":"leite","original_text":"3.5 xícaras (chá) leite","quantity_text":null,"component_title":"Manjar"},{"slug":"manjar-com-calda-de-chocolate","unit":"lata","scaling":"linear","position":3,"quantity":1,"is_optional":false,"display_name":"leite condensado","original_text":"1 lata leite condensado","quantity_text":null,"component_title":"Manjar"},{"slug":"manjar-com-calda-de-chocolate","unit":"vidro","scaling":"linear","position":4,"quantity":1,"is_optional":false,"display_name":"leite de coco (200ml)","original_text":"1 vidro leite de coco (200ml)","quantity_text":null,"component_title":"Manjar"},{"slug":"manjar-com-calda-de-chocolate","unit":"xícara (chá)","scaling":"linear","position":5,"quantity":1,"is_optional":false,"display_name":"coco ralado","original_text":"1 xícara (chá) coco ralado","quantity_text":null,"component_title":"Manjar"},{"slug":"manjar-com-calda-de-chocolate","unit":"colheres (sopa)","scaling":"linear","position":6,"quantity":2,"is_optional":false,"display_name":"açúcar","original_text":"2 colheres (sopa) açúcar","quantity_text":null,"component_title":"Manjar"},{"slug":"manjar-com-calda-de-chocolate","unit":"g","scaling":"linear","position":1,"quantity":170,"is_optional":false,"display_name":"chocolate ao leite picado","original_text":"170 g chocolate ao leite picado","quantity_text":null,"component_title":"Calda de chocolate"},{"slug":"manjar-com-calda-de-chocolate","unit":"colher (sopa)","scaling":"linear","position":2,"quantity":1,"is_optional":false,"display_name":"manteiga","original_text":"1 colher (sopa) manteiga","quantity_text":null,"component_title":"Calda de chocolate"},{"slug":"manjar-com-calda-de-chocolate","unit":"g","scaling":"linear","position":3,"quantity":100,"is_optional":false,"display_name":"creme de leite (1/2 caixa)","original_text":"100 g creme de leite (1/2 caixa)","quantity_text":null,"component_title":"Calda de chocolate"},{"slug":"manjar-com-calda-de-chocolate","unit":null,"scaling":"linear","position":1,"quantity":null,"is_optional":false,"display_name":"raspas de chocolate ao leite","original_text":"raspas de chocolate ao leite para decorar","quantity_text":"para decorar","component_title":"Finalização"},{"slug":"manjar-de-doce-de-leite-e-ameixa","unit":"g","scaling":"linear","position":1,"quantity":300,"is_optional":false,"display_name":"ameixa seca sem caroço","original_text":"300 g ameixa seca sem caroço","quantity_text":null,"component_title":"Calda de ameixa"},{"slug":"manjar-de-doce-de-leite-e-ameixa","unit":"xícara (chá)","scaling":"linear","position":2,"quantity":0.5,"is_optional":false,"display_name":"açúcar","original_text":"0.5 xícara (chá) açúcar","quantity_text":null,"component_title":"Calda de ameixa"},{"slug":"manjar-de-doce-de-leite-e-ameixa","unit":"xícaras (chá)","scaling":"linear","position":3,"quantity":1.5,"is_optional":false,"display_name":"água","original_text":"1.5 xícaras (chá) água","quantity_text":null,"component_title":"Calda de ameixa"},{"slug":"manjar-de-doce-de-leite-e-ameixa","unit":"envelope","scaling":"linear","position":1,"quantity":1,"is_optional":false,"display_name":"gelatina em pó sem sabor","original_text":"1 envelope gelatina em pó sem sabor","quantity_text":null,"component_title":"Manjar de doce de leite"},{"slug":"manjar-de-doce-de-leite-e-ameixa","unit":"colheres (sopa)","scaling":"linear","position":2,"quantity":5,"is_optional":false,"display_name":"leite","original_text":"5 colheres (sopa) leite","quantity_text":null,"component_title":"Manjar de doce de leite"},{"slug":"manjar-de-doce-de-leite-e-ameixa","unit":"xícara (chá)","scaling":"linear","position":3,"quantity":1,"is_optional":false,"display_name":"doce de leite cremoso","original_text":"1 xícara (chá) doce de leite cremoso","quantity_text":null,"component_title":"Manjar de doce de leite"},{"slug":"manjar-de-doce-de-leite-e-ameixa","unit":"xícaras (chá)","scaling":"linear","position":4,"quantity":1.5,"is_optional":false,"display_name":"creme de leite fresco gelado","original_text":"1.5 xícaras (chá) creme de leite fresco gelado","quantity_text":null,"component_title":"Manjar de doce de leite"},{"slug":"manjar-de-doce-de-leite-e-ameixa","unit":"colheres (sopa)","scaling":"linear","position":5,"quantity":2,"is_optional":false,"display_name":"açúcar","original_text":"2 colheres (sopa) açúcar","quantity_text":null,"component_title":"Manjar de doce de leite"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":"lata","scaling":"linear","position":1,"quantity":1,"is_optional":false,"display_name":"leite condensado","original_text":"1 lata leite condensado","quantity_text":null,"component_title":"Manjar de morango"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":"litro","scaling":"linear","position":2,"quantity":1,"is_optional":false,"display_name":"leite","original_text":"1 litro leite","quantity_text":null,"component_title":"Manjar de morango"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":"envelope","scaling":"linear","position":3,"quantity":1,"is_optional":false,"display_name":"gelatina em pó sabor morango","original_text":"1 envelope gelatina em pó sabor morango","quantity_text":null,"component_title":"Manjar de morango"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":"colheres (sopa)","scaling":"linear","position":4,"quantity":5,"is_optional":false,"display_name":"maisena","original_text":"5 colheres (sopa) maisena","quantity_text":null,"component_title":"Manjar de morango"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":"xícaras (chá)","scaling":"linear","position":5,"quantity":2,"is_optional":false,"display_name":"morango picado","original_text":"2 xícaras (chá) morango picado","quantity_text":null,"component_title":"Manjar de morango"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":null,"scaling":"linear","position":6,"quantity":null,"is_optional":false,"display_name":"óleo","original_text":"óleo para untar","quantity_text":"para untar","component_title":"Manjar de morango"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":"xícara (chá)","scaling":"linear","position":1,"quantity":0.5,"is_optional":false,"display_name":"açúcar","original_text":"0.5 xícara (chá) açúcar","quantity_text":null,"component_title":"Calda de chocolate"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":"colheres (sopa)","scaling":"linear","position":2,"quantity":2,"is_optional":false,"display_name":"chocolate em pó","original_text":"2 colheres (sopa) chocolate em pó","quantity_text":null,"component_title":"Calda de chocolate"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":"colher (sopa)","scaling":"linear","position":3,"quantity":1,"is_optional":false,"display_name":"manteiga","original_text":"1 colher (sopa) manteiga","quantity_text":null,"component_title":"Calda de chocolate"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":"colheres (sopa)","scaling":"linear","position":4,"quantity":3,"is_optional":false,"display_name":"leite","original_text":"3 colheres (sopa) leite","quantity_text":null,"component_title":"Calda de chocolate"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":null,"scaling":"linear","position":1,"quantity":null,"is_optional":false,"display_name":"raspas de chocolate ao leite","original_text":"raspas de chocolate ao leite a gosto","quantity_text":"a gosto","component_title":"Decoração e finalização"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":null,"scaling":"linear","position":2,"quantity":null,"is_optional":false,"display_name":"geleia de morango","original_text":"geleia de morango a gosto","quantity_text":"a gosto","component_title":"Decoração e finalização"},{"slug":"manjar-de-morango-com-calda-de-chocolate","unit":null,"scaling":"linear","position":3,"quantity":null,"is_optional":false,"display_name":"morangos picados","original_text":"morangos picados se desejar","quantity_text":"se desejar","component_title":"Decoração e finalização"},{"slug":"manjar-branco-especial","unit":"lata","scaling":"linear","position":1,"quantity":1,"is_optional":false,"display_name":"leite condensado","original_text":"1 lata leite condensado","quantity_text":null,"component_title":"Manjar branco"},{"slug":"manjar-branco-especial","unit":"latas","scaling":"linear","position":2,"quantity":2.5,"is_optional":false,"display_name":"leite (use a lata de leite condensado vazia para medir)","original_text":"2.5 latas leite (use a lata de leite condensado vazia para medir)","quantity_text":null,"component_title":"Manjar branco"},{"slug":"manjar-branco-especial","unit":"vidro","scaling":"linear","position":3,"quantity":1,"is_optional":false,"display_name":"leite de coco (200ml)","original_text":"1 vidro leite de coco (200ml)","quantity_text":null,"component_title":"Manjar branco"},{"slug":"manjar-branco-especial","unit":"xícara (chá)","scaling":"linear","position":4,"quantity":0.5,"is_optional":false,"display_name":"maisena","original_text":"0.5 xícara (chá) maisena","quantity_text":null,"component_title":"Manjar branco"},{"slug":"manjar-branco-especial","unit":"xícaras (chá)","scaling":"linear","position":1,"quantity":1.5,"is_optional":false,"display_name":"açúcar","original_text":"1.5 xícaras (chá) açúcar","quantity_text":null,"component_title":"Calda de ameixas"},{"slug":"manjar-branco-especial","unit":"colher (sopa)","scaling":"linear","position":2,"quantity":0.5,"is_optional":false,"display_name":"vinho tinto","original_text":"0.5 colher (sopa) vinho tinto","quantity_text":null,"component_title":"Calda de ameixas"},{"slug":"manjar-branco-especial","unit":"xícaras (chá)","scaling":"linear","position":3,"quantity":1.5,"is_optional":false,"display_name":"ameixas-pretas secas sem caroço","original_text":"1.5 xícaras (chá) ameixas-pretas secas sem caroço","quantity_text":null,"component_title":"Calda de ameixas"},{"slug":"manjar-branco-especial","unit":"unidade","scaling":"linear","position":4,"quantity":1,"is_optional":false,"display_name":"canela em pau","original_text":"1 unidade canela em pau","quantity_text":null,"component_title":"Calda de ameixas"},{"slug":"manjar-branco-especial","unit":"unidades","scaling":"linear","position":5,"quantity":2,"is_optional":false,"display_name":"cravos-da-índia","original_text":"2 unidades cravos-da-índia","quantity_text":null,"component_title":"Calda de ameixas"},{"slug":"manjar-branco-especial","unit":"xícaras (chá)","scaling":"linear","position":6,"quantity":2,"is_optional":false,"display_name":"água","original_text":"2 xícaras (chá) água","quantity_text":null,"component_title":"Calda de ameixas"},{"slug":"manjar-de-tapioca","unit":"xícaras (chá)","scaling":"linear","position":1,"quantity":2,"is_optional":false,"display_name":"tapioca granulada","original_text":"2 xícaras (chá) tapioca granulada","quantity_text":null,"component_title":"Manjar de tapioca"},{"slug":"manjar-de-tapioca","unit":"xícara (chá)","scaling":"linear","position":2,"quantity":1,"is_optional":false,"display_name":"açúcar","original_text":"1 xícara (chá) açúcar","quantity_text":null,"component_title":"Manjar de tapioca"},{"slug":"manjar-de-tapioca","unit":"colher (chá)","scaling":"linear","position":3,"quantity":1,"is_optional":false,"display_name":"sal","original_text":"1 colher (chá) sal","quantity_text":null,"component_title":"Manjar de tapioca"},{"slug":"manjar-de-tapioca","unit":"vidro","scaling":"linear","position":4,"quantity":1,"is_optional":false,"display_name":"leite de coco (200ml)","original_text":"1 vidro leite de coco (200ml)","quantity_text":null,"component_title":"Manjar de tapioca"},{"slug":"manjar-de-tapioca","unit":"g","scaling":"linear","position":5,"quantity":150,"is_optional":false,"display_name":"coco ralado","original_text":"150 g coco ralado","quantity_text":null,"component_title":"Manjar de tapioca"},{"slug":"manjar-de-tapioca","unit":"xícaras (chá)","scaling":"linear","position":6,"quantity":2,"is_optional":false,"display_name":"leite quente","original_text":"2 xícaras (chá) leite quente","quantity_text":null,"component_title":"Manjar de tapioca"},{"slug":"manjar-de-tapioca","unit":null,"scaling":"linear","position":7,"quantity":null,"is_optional":false,"display_name":"manteiga","original_text":"manteiga para untar","quantity_text":"para untar","component_title":"Manjar de tapioca"},{"slug":"manjar-de-tapioca","unit":"lata","scaling":"linear","position":1,"quantity":0.5,"is_optional":false,"display_name":"leite condensado","original_text":"0.5 lata leite condensado","quantity_text":null,"component_title":"Finalização"},{"slug":"manjar-de-nutella","unit":"xícaras (chá)","scaling":"linear","position":1,"quantity":4,"is_optional":false,"display_name":"leite","original_text":"4 xícaras (chá) leite","quantity_text":null,"component_title":"Manjar de Nutella"},{"slug":"manjar-de-nutella","unit":"xícara (chá)","scaling":"linear","position":2,"quantity":1,"is_optional":false,"display_name":"maisena","original_text":"1 xícara (chá) maisena","quantity_text":null,"component_title":"Manjar de Nutella"},{"slug":"manjar-de-nutella","unit":"xícara (chá)","scaling":"linear","position":3,"quantity":1,"is_optional":false,"display_name":"Nutella®","original_text":"1 xícara (chá) Nutella®","quantity_text":null,"component_title":"Manjar de Nutella"},{"slug":"manjar-de-nutella","unit":"lata","scaling":"linear","position":4,"quantity":1,"is_optional":false,"display_name":"leite condensado","original_text":"1 lata leite condensado","quantity_text":null,"component_title":"Manjar de Nutella"},{"slug":"manjar-de-nutella","unit":"colheres (sopa)","scaling":"linear","position":5,"quantity":2,"is_optional":false,"display_name":"chocolate em pó","original_text":"2 colheres (sopa) chocolate em pó","quantity_text":null,"component_title":"Manjar de Nutella"},{"slug":"manjar-de-nutella","unit":"colher (chá)","scaling":"linear","position":6,"quantity":1,"is_optional":false,"display_name":"essência de baunilha","original_text":"1 colher (chá) essência de baunilha","quantity_text":null,"component_title":"Manjar de Nutella"},{"slug":"manjar-de-nutella","unit":null,"scaling":"linear","position":7,"quantity":null,"is_optional":false,"display_name":"óleo","original_text":"óleo para untar","quantity_text":"para untar","component_title":"Manjar de Nutella"},{"slug":"manjar-de-nutella","unit":"xícara (chá)","scaling":"linear","position":1,"quantity":0.5,"is_optional":false,"display_name":"Nutella®","original_text":"0.5 xícara (chá) Nutella®","quantity_text":null,"component_title":"Calda de Nutella"},{"slug":"manjar-de-nutella","unit":"xícara (chá)","scaling":"linear","position":2,"quantity":0.333,"is_optional":false,"display_name":"creme de leite","original_text":"0.333 xícara (chá) creme de leite","quantity_text":null,"component_title":"Calda de Nutella"},{"slug":"manjar-ouro-branco","unit":"xícara (chá)","scaling":"linear","position":1,"quantity":1,"is_optional":false,"display_name":"água","original_text":"1 xícara (chá) água","quantity_text":null,"component_title":"Calda de chocolate"},{"slug":"manjar-ouro-branco","unit":"xícara (chá)","scaling":"linear","position":2,"quantity":1,"is_optional":false,"display_name":"açúcar","original_text":"1 xícara (chá) açúcar","quantity_text":null,"component_title":"Calda de chocolate"},{"slug":"manjar-ouro-branco","unit":"colheres (sopa)","scaling":"linear","position":3,"quantity":2,"is_optional":false,"display_name":"achocolatado em pó","original_text":"2 colheres (sopa) achocolatado em pó","quantity_text":null,"component_title":"Calda de chocolate"},{"slug":"manjar-ouro-branco","unit":"litro","scaling":"linear","position":1,"quantity":1,"is_optional":false,"display_name":"leite","original_text":"1 litro leite","quantity_text":null,"component_title":"Manjar Ouro Branco"},{"slug":"manjar-ouro-branco","unit":"vidro","scaling":"linear","position":2,"quantity":1,"is_optional":false,"display_name":"leite de coco (200g)","original_text":"1 vidro leite de coco (200g)","quantity_text":null,"component_title":"Manjar Ouro Branco"},{"slug":"manjar-ouro-branco","unit":"lata","scaling":"linear","position":3,"quantity":1,"is_optional":false,"display_name":"leite condensado","original_text":"1 lata leite condensado","quantity_text":null,"component_title":"Manjar Ouro Branco"},{"slug":"manjar-ouro-branco","unit":"colheres (sopa)","scaling":"linear","position":4,"quantity":5,"is_optional":false,"display_name":"maisena","original_text":"5 colheres (sopa) maisena","quantity_text":null,"component_title":"Manjar Ouro Branco"},{"slug":"manjar-ouro-branco","unit":"lata","scaling":"linear","position":5,"quantity":1,"is_optional":false,"display_name":"creme de leite","original_text":"1 lata creme de leite","quantity_text":null,"component_title":"Manjar Ouro Branco"},{"slug":"manjar-ouro-branco","unit":"unidades","scaling":"linear","position":6,"quantity":5,"is_optional":false,"display_name":"bombons Ouro Branco® picados","original_text":"5 unidades bombons Ouro Branco® picados","quantity_text":null,"component_title":"Manjar Ouro Branco"},{"slug":"manjar-ouro-branco","unit":null,"scaling":"linear","position":1,"quantity":null,"is_optional":false,"display_name":"bombons Ouro Branco®","original_text":"bombons Ouro Branco® para decorar","quantity_text":"para decorar","component_title":"Decoração e finalização"}]$data$::jsonb)
+ as x(slug text,component_title text,position int,quantity numeric,unit text,quantity_text text,display_name text,original_text text,scaling text,is_optional boolean)
+)
+insert into public.recipe_ingredients(recipe_id,component_id,position,quantity,unit,quantity_text,display_name,original_text,scaling,is_optional)
+select r.id,c.id,d.position,d.quantity,d.unit,d.quantity_text,d.display_name,d.original_text,d.scaling,d.is_optional
+from d join public.recipes r on r.slug=d.slug
+join public.recipe_components c on c.recipe_id=r.id and c.title=d.component_title
+where not exists(select 1 from public.recipe_ingredients i where i.recipe_id=r.id and i.component_id=c.id and i.position=d.position);
+
+with d as (
+ select * from jsonb_to_recordset($data$[{"slug":"manjar-de-coco-com-frutas-vermelhas","position":1,"instruction":"Em uma panela, misture o leite, o leite de coco, o leite condensado, o coco ralado, a maisena e o açúcar.","original_text":"Em uma panela, misture o leite, o leite de coco, o leite condensado, o coco ralado, a maisena e o açúcar.","component_title":"Manjar de coco"},{"slug":"manjar-de-coco-com-frutas-vermelhas","position":2,"instruction":"Leve ao fogo médio, mexendo até engrossar.","original_text":"Leve ao fogo médio, mexendo até engrossar.","component_title":"Manjar de coco"},{"slug":"manjar-de-coco-com-frutas-vermelhas","position":3,"instruction":"Transfira para uma fôrma de buraco no meio média, untada.","original_text":"Transfira para uma fôrma de buraco no meio média, untada.","component_title":"Manjar de coco"},{"slug":"manjar-de-coco-com-frutas-vermelhas","position":4,"instruction":"Leve à geladeira por 3 horas.","original_text":"Leve à geladeira por 3 horas.","component_title":"Manjar de coco"},{"slug":"manjar-de-coco-com-frutas-vermelhas","position":1,"instruction":"Para a calda, misture os ingredientes em uma panela e leve ao fogo baixo.","original_text":"Para a calda, misture os ingredientes em uma panela e leve ao fogo baixo.","component_title":"Calda de frutas vermelhas"},{"slug":"manjar-de-coco-com-frutas-vermelhas","position":2,"instruction":"Cozinhe por 5 minutos após levantar fervura.","original_text":"Cozinhe por 5 minutos após levantar fervura.","component_title":"Calda de frutas vermelhas"},{"slug":"manjar-de-coco-com-frutas-vermelhas","position":3,"instruction":"Deixe esfriar.","original_text":"Deixe esfriar.","component_title":"Calda de frutas vermelhas"},{"slug":"manjar-de-coco-com-frutas-vermelhas","position":1,"instruction":"Desenforme o manjar, regue com a calda já fria e decore com as frutas antes de servir.","original_text":"Desenforme o manjar, regue com a calda já fria e decore com as frutas antes de servir.","component_title":"Finalização"},{"slug":"manjar-de-milho-com-calda-de-canela","position":1,"instruction":"Bata no liquidificador o milho, o leite condensado, o leite, a maisena e as gemas por 2 minutos.","original_text":"Bata no liquidificador o milho, o leite condensado, o leite, a maisena e as gemas por 2 minutos.","component_title":"Manjar de milho"},{"slug":"manjar-de-milho-com-calda-de-canela","position":2,"instruction":"Transfira para uma panela e leve ao fogo baixo, mexendo até engrossar.","original_text":"Transfira para uma panela e leve ao fogo baixo, mexendo até engrossar.","component_title":"Manjar de milho"},{"slug":"manjar-de-milho-com-calda-de-canela","position":3,"instruction":"Despeje em uma fôrma de buraco no meio decorada de 24cm de diâmetro umedecida e leve à geladeira por 4 horas.","original_text":"Despeje em uma fôrma de buraco no meio decorada de 24cm de diâmetro umedecida e leve à geladeira por 4 horas.","component_title":"Manjar de milho"},{"slug":"manjar-de-milho-com-calda-de-canela","position":1,"instruction":"Para a calda, leve o açúcar e a manteiga ao fogo baixo, sem mexer, até dissolver e ficar levemente dourada.","original_text":"Para a calda, leve o açúcar e a manteiga ao fogo baixo, sem mexer, até dissolver e ficar levemente dourada.","component_title":"Calda de canela"},{"slug":"manjar-de-milho-com-calda-de-canela","position":2,"instruction":"Adicione a canela, a água, misture e cozinhe por mais alguns minutos ou até dissolver.","original_text":"Adicione a canela, a água, misture e cozinhe por mais alguns minutos ou até dissolver.","component_title":"Calda de canela"},{"slug":"manjar-de-milho-com-calda-de-canela","position":1,"instruction":"Desenforme o manjar, regue com a calda fria e sirva em seguida.","original_text":"Desenforme o manjar, regue com a calda fria e sirva em seguida.","component_title":"Finalização"},{"slug":"manjar-com-calda-de-chocolate","position":1,"instruction":"Em uma panela, dissolva a maisena no leite, adicione o leite condensado, o leite de coco, o coco ralado e o açúcar.","original_text":"Em uma panela, dissolva a maisena no leite, adicione o leite condensado, o leite de coco, o coco ralado e o açúcar.","component_title":"Manjar"},{"slug":"manjar-com-calda-de-chocolate","position":2,"instruction":"Leve ao fogo baixo, mexendo até engrossar.","original_text":"Leve ao fogo baixo, mexendo até engrossar.","component_title":"Manjar"},{"slug":"manjar-com-calda-de-chocolate","position":3,"instruction":"Retire do fogo e despeje em uma fôrma de buraco no meio de 24cm de diâmetro umedecida.","original_text":"Retire do fogo e despeje em uma fôrma de buraco no meio de 24cm de diâmetro umedecida.","component_title":"Manjar"},{"slug":"manjar-com-calda-de-chocolate","position":4,"instruction":"Leve à geladeira por 4 horas.","original_text":"Leve à geladeira por 4 horas.","component_title":"Manjar"},{"slug":"manjar-com-calda-de-chocolate","position":1,"instruction":"Para a calda, derreta o chocolate e a manteiga em banho-maria.","original_text":"Para a calda, derreta o chocolate e a manteiga em banho-maria.","component_title":"Calda de chocolate"},{"slug":"manjar-com-calda-de-chocolate","position":2,"instruction":"Misture com o creme de leite até ficar homogêneo.","original_text":"Misture com o creme de leite até ficar homogêneo.","component_title":"Calda de chocolate"},{"slug":"manjar-com-calda-de-chocolate","position":1,"instruction":"Desenforme o manjar em um prato grande, cubra com a calda e decore com raspas de chocolate.","original_text":"Desenforme o manjar em um prato grande, cubra com a calda e decore com raspas de chocolate.","component_title":"Finalização"},{"slug":"manjar-com-calda-de-chocolate","position":2,"instruction":"Sirva em seguida.","original_text":"Sirva em seguida.","component_title":"Finalização"},{"slug":"manjar-de-doce-de-leite-e-ameixa","position":1,"instruction":"Misture os ingredientes da calda em uma panela e leve ao fogo baixo, mexendo de vez em quando, por 15 minutos ou até a ameixa amaciar e a calda encorpar.","original_text":"Misture os ingredientes da calda em uma panela e leve ao fogo baixo, mexendo de vez em quando, por 15 minutos ou até a ameixa amaciar e a calda encorpar.","component_title":"Calda de ameixa"},{"slug":"manjar-de-doce-de-leite-e-ameixa","position":2,"instruction":"Retire do fogo e deixe esfriar.","original_text":"Retire do fogo e deixe esfriar.","component_title":"Calda de ameixa"},{"slug":"manjar-de-doce-de-leite-e-ameixa","position":3,"instruction":"Retire metade das ameixas e coloque-as no liquidificador, reservando o restante da calda.","original_text":"Retire metade das ameixas e coloque-as no liquidificador, reservando o restante da calda.","component_title":"Calda de ameixa"},{"slug":"manjar-de-doce-de-leite-e-ameixa","position":1,"instruction":"Em uma panela, hidrate a gelatina no leite e dissolva em banho-maria.","original_text":"Em uma panela, hidrate a gelatina no leite e dissolva em banho-maria.","component_title":"Manjar de doce de leite"},{"slug":"manjar-de-doce-de-leite-e-ameixa","position":2,"instruction":"Despeje no liquidificador, acrescente o doce de leite e bata até homogeneizar.","original_text":"Despeje no liquidificador, acrescente o doce de leite e bata até homogeneizar.","component_title":"Manjar de doce de leite"},{"slug":"manjar-de-doce-de-leite-e-ameixa","position":3,"instruction":"Bata o creme de leite na batedeira em velocidade média até começar a encorpar.","original_text":"Bata o creme de leite na batedeira em velocidade média até começar a encorpar.","component_title":"Manjar de doce de leite"},{"slug":"manjar-de-doce-de-leite-e-ameixa","position":4,"instruction":"Sem parar de bater, adicione o açúcar, aos poucos, até formar picos.","original_text":"Sem parar de bater, adicione o açúcar, aos poucos, até formar picos.","component_title":"Manjar de doce de leite"},{"slug":"manjar-de-doce-de-leite-e-ameixa","position":5,"instruction":"Despeje o creme do liquidificador e misture delicadamente em movimentos de baixo para cima.","original_text":"Despeje o creme do liquidificador e misture delicadamente em movimentos de baixo para cima.","component_title":"Manjar de doce de leite"},{"slug":"manjar-de-doce-de-leite-e-ameixa","position":6,"instruction":"Despeje em uma fôrma de buraco no meio de 22cm de diâmetro umedecida e leve à geladeira por 2 horas ou até firmar.","original_text":"Despeje em uma fôrma de buraco no meio de 22cm de diâmetro umedecida e leve à geladeira por 2 horas ou até firmar.","component_title":"Manjar de doce de leite"},{"slug":"manjar-de-doce-de-leite-e-ameixa","position":1,"instruction":"Desenforme passando uma faca lisa na lateral.","original_text":"Desenforme passando uma faca lisa na lateral.","component_title":"Finalização"},{"slug":"manjar-de-doce-de-leite-e-ameixa","position":2,"instruction":"Decore com a calda reservada e sirva.","original_text":"Decore com a calda reservada e sirva.","component_title":"Finalização"},{"slug":"manjar-de-morango-com-calda-de-chocolate","position":1,"instruction":"Para o manjar, misture em uma panela o leite condensado, o leite, a gelatina, a maisena e o morango.","original_text":"Para o manjar, misture em uma panela o leite condensado, o leite, a gelatina, a maisena e o morango.","component_title":"Manjar de morango"},{"slug":"manjar-de-morango-com-calda-de-chocolate","position":2,"instruction":"Leve ao fogo médio, mexendo até levantar fervura e engrossar.","original_text":"Leve ao fogo médio, mexendo até levantar fervura e engrossar.","component_title":"Manjar de morango"},{"slug":"manjar-de-morango-com-calda-de-chocolate","position":3,"instruction":"Transfira para uma fôrma de buraco no meio de 22cm de diâmetro untada e leve à geladeira por 3 horas.","original_text":"Transfira para uma fôrma de buraco no meio de 22cm de diâmetro untada e leve à geladeira por 3 horas.","component_title":"Manjar de morango"},{"slug":"manjar-de-morango-com-calda-de-chocolate","position":1,"instruction":"Para a calda, em uma panela, leve os ingredientes ao fogo médio, mexendo até dissolver todo o açúcar e engrossar.","original_text":"Para a calda, em uma panela, leve os ingredientes ao fogo médio, mexendo até dissolver todo o açúcar e engrossar.","component_title":"Calda de chocolate"},{"slug":"manjar-de-morango-com-calda-de-chocolate","position":2,"instruction":"Deixe esfriar.","original_text":"Deixe esfriar.","component_title":"Calda de chocolate"},{"slug":"manjar-de-morango-com-calda-de-chocolate","position":1,"instruction":"Desenforme o manjar, cubra com a calda, decore com raspas de chocolate e a geleia de morango e, se desejar, com morangos picados.","original_text":"Desenforme o manjar, cubra com a calda, decore com raspas de chocolate e a geleia de morango e, se desejar, com morangos picados.","component_title":"Decoração e finalização"},{"slug":"manjar-de-morango-com-calda-de-chocolate","position":2,"instruction":"Sirva.","original_text":"Sirva.","component_title":"Decoração e finalização"},{"slug":"manjar-branco-especial","position":1,"instruction":"Em uma tigela, misture o leite condensado, o leite, o leite de coco e a maisena.","original_text":"Em uma tigela, misture o leite condensado, o leite, o leite de coco e a maisena.","component_title":"Manjar branco"},{"slug":"manjar-branco-especial","position":2,"instruction":"Leve ao fogo baixo, mexendo sempre, até engrossar.","original_text":"Leve ao fogo baixo, mexendo sempre, até engrossar.","component_title":"Manjar branco"},{"slug":"manjar-branco-especial","position":3,"instruction":"Despeje em uma fôrma de buraco no meio de 20cm de diâmetro umedecida e leve à geladeira por 4 horas.","original_text":"Despeje em uma fôrma de buraco no meio de 20cm de diâmetro umedecida e leve à geladeira por 4 horas.","component_title":"Manjar branco"},{"slug":"manjar-branco-especial","position":1,"instruction":"Para a calda, misture todos os ingredientes em uma panela.","original_text":"Para a calda, misture todos os ingredientes em uma panela.","component_title":"Calda de ameixas"},{"slug":"manjar-branco-especial","position":2,"instruction":"Leve ao fogo médio por 10 minutos.","original_text":"Leve ao fogo médio por 10 minutos.","component_title":"Calda de ameixas"},{"slug":"manjar-branco-especial","position":1,"instruction":"Desenforme o manjar e cubra com a calda.","original_text":"Desenforme o manjar e cubra com a calda.","component_title":"Finalização"},{"slug":"manjar-de-tapioca","position":1,"instruction":"Em uma vasilha, misture a tapioca granulada, o açúcar, o sal e o leite de coco.","original_text":"Em uma vasilha, misture a tapioca granulada, o açúcar, o sal e o leite de coco.","component_title":"Manjar de tapioca"},{"slug":"manjar-de-tapioca","position":2,"instruction":"Adicione o coco ralado e o leite quente, aos poucos, mexendo até ficar homogêneo e o leite ser absorvido.","original_text":"Adicione o coco ralado e o leite quente, aos poucos, mexendo até ficar homogêneo e o leite ser absorvido.","component_title":"Manjar de tapioca"},{"slug":"manjar-de-tapioca","position":3,"instruction":"Transfira para uma fôrma de buraco no meio de 22cm de diâmetro untada e leve à geladeira por 2 horas.","original_text":"Transfira para uma fôrma de buraco no meio de 22cm de diâmetro untada e leve à geladeira por 2 horas.","component_title":"Manjar de tapioca"},{"slug":"manjar-de-tapioca","position":1,"instruction":"Retire, desenforme sobre um prato e sirva regado com o leite condensado.","original_text":"Retire, desenforme sobre um prato e sirva regado com o leite condensado.","component_title":"Finalização"},{"slug":"manjar-de-nutella","position":1,"instruction":"No liquidificador, bata o leite, a maisena, a Nutella®, o leite condensado, o chocolate em pó e a essência até homogeneizar.","original_text":"No liquidificador, bata o leite, a maisena, a Nutella®, o leite condensado, o chocolate em pó e a essência até homogeneizar.","component_title":"Manjar de Nutella"},{"slug":"manjar-de-nutella","position":2,"instruction":"Despeje em uma panela e leve ao fogo baixo, mexendo até engrossar e levantar fervura.","original_text":"Despeje em uma panela e leve ao fogo baixo, mexendo até engrossar e levantar fervura.","component_title":"Manjar de Nutella"},{"slug":"manjar-de-nutella","position":3,"instruction":"Transfira para uma fôrma de buraco no meio de 22cm de diâmetro decorada untada.","original_text":"Transfira para uma fôrma de buraco no meio de 22cm de diâmetro decorada untada.","component_title":"Manjar de Nutella"},{"slug":"manjar-de-nutella","position":4,"instruction":"Leve à geladeira por 5 horas.","original_text":"Leve à geladeira por 5 horas.","component_title":"Manjar de Nutella"},{"slug":"manjar-de-nutella","position":1,"instruction":"Misture a Nutella® com o creme de leite.","original_text":"Misture os ingredientes da calda.","component_title":"Calda de Nutella"},{"slug":"manjar-de-nutella","position":1,"instruction":"Desenforme, regue com a calda e sirva.","original_text":"Desenforme, regue com os ingredientes da calda misturados e sirva.","component_title":"Finalização"},{"slug":"manjar-ouro-branco","position":1,"instruction":"Em uma panela, coloque os ingredientes da calda, leve ao fogo baixo e deixe cozinhar por 10 minutos ou até formar uma calda rala.","original_text":"Em uma panela, coloque os ingredientes da calda, leve ao fogo baixo e deixe cozinhar por 10 minutos ou até formar uma calda rala.","component_title":"Calda de chocolate"},{"slug":"manjar-ouro-branco","position":2,"instruction":"Retire do fogo e reserve.","original_text":"Retire do fogo e reserve.","component_title":"Calda de chocolate"},{"slug":"manjar-ouro-branco","position":1,"instruction":"Em uma panela, coloque o leite, o leite de coco, o leite condensado e a maisena.","original_text":"Em uma panela, coloque o leite, o leite de coco, o leite condensado e a maisena.","component_title":"Manjar Ouro Branco"},{"slug":"manjar-ouro-branco","position":2,"instruction":"Leve ao fogo médio, mexendo sempre até cozinhar e engrossar.","original_text":"Leve ao fogo médio, mexendo sempre até cozinhar e engrossar.","component_title":"Manjar Ouro Branco"},{"slug":"manjar-ouro-branco","position":3,"instruction":"Retire do fogo, acrescente o creme de leite e misture bem.","original_text":"Retire do fogo, acrescente o creme de leite e misture bem.","component_title":"Manjar Ouro Branco"},{"slug":"manjar-ouro-branco","position":4,"instruction":"Adicione os bombons picados e misture novamente.","original_text":"Adicione os bombons picados e misture novamente.","component_title":"Manjar Ouro Branco"},{"slug":"manjar-ouro-branco","position":5,"instruction":"Coloque em uma fôrma de buraco no meio de 30cm de diâmetro decorada e leve à geladeira por 4 horas.","original_text":"Coloque em uma fôrma de buraco no meio de 30cm de diâmetro decorada e leve à geladeira por 4 horas.","component_title":"Manjar Ouro Branco"},{"slug":"manjar-ouro-branco","position":1,"instruction":"Desenforme em um prato de servir, regue com a calda, decore com bombons e sirva.","original_text":"Desenforme em um prato de servir, regue com a calda, decore com bombons e sirva.","component_title":"Decoração e finalização"}]$data$::jsonb)
+ as x(slug text,component_title text,position int,instruction text,original_text text)
+)
+insert into public.recipe_steps(recipe_id,component_id,position,instruction,original_text)
+select r.id,c.id,d.position,d.instruction,d.original_text
+from d join public.recipes r on r.slug=d.slug
+join public.recipe_components c on c.recipe_id=r.id and c.title=d.component_title
+where not exists(select 1 from public.recipe_steps s where s.recipe_id=r.id and s.component_id=c.id and s.position=d.position);
+commit;
+
+-- >>>>>>>>>> migrations/20261115024826_refine_manjar_component_order_and_source_pages.sql
+-- Corrige a ordem de componentes e referências de páginas do PDF de manjares.
+begin;
+update public.recipes set source_page_start=2,source_page_end=3,updated_at=now()
+where slug='manjar-com-calda-de-chocolate';
+update public.recipes set source_page_start=8,source_page_end=9,updated_at=now()
+where slug='manjar-ouro-branco';
+update public.recipe_components c set position=case c.role when 'calda' then 1 when 'massa' then 2 else c.position end,updated_at=now()
+from public.recipes r where c.recipe_id=r.id and r.slug in ('manjar-de-doce-de-leite-e-ameixa','manjar-ouro-branco');
+insert into public.recipe_components(recipe_id,role,title,multiplier,position,source_page_start,source_page_end)
+select r.id,'finalizacao','Finalização',1,3,r.source_page_start,r.source_page_end
+from public.recipes r
+where r.slug in ('manjar-de-milho-com-calda-de-canela','manjar-branco-especial','manjar-de-nutella')
+and not exists(select 1 from public.recipe_components c where c.recipe_id=r.id and c.role='finalizacao');
+update public.recipe_steps s set component_id=final.id,position=1,updated_at=now()
+from public.recipes r
+join public.recipe_components old on old.recipe_id=r.id and old.role='calda'
+join public.recipe_components final on final.recipe_id=r.id and final.role='finalizacao'
+where s.recipe_id=r.id and s.component_id=old.id and
+ ((r.slug='manjar-de-milho-com-calda-de-canela' and s.position=3)
+  or (r.slug='manjar-branco-especial' and s.position=3)
+  or (r.slug='manjar-de-nutella' and s.position=1));
+commit;
+
+-- >>>>>>>>>> migrations/20261115024848_complete_manjar_nutella_syrup_step.sql
+-- Separa a mistura da calda da etapa de desenformar o Manjar de Nutella.
+begin;
+update public.recipe_steps
+set instruction='Desenforme, regue com a calda e sirva.',
+    original_text='Desenforme, regue com os ingredientes da calda misturados e sirva.',
+    position=1,updated_at=now()
+where recipe_id=(select id from public.recipes where slug='manjar-de-nutella')
+  and component_id=(select c.id from public.recipe_components c join public.recipes r on r.id=c.recipe_id where r.slug='manjar-de-nutella' and c.role='finalizacao');
+insert into public.recipe_steps(recipe_id,component_id,position,instruction,original_text)
+select r.id,c.id,1,'Misture a Nutella® com o creme de leite.','Misture os ingredientes da calda.'
+from public.recipes r join public.recipe_components c on c.recipe_id=r.id and c.role='calda'
+where r.slug='manjar-de-nutella'
+and not exists(select 1 from public.recipe_steps s where s.component_id=c.id);
+commit;
+
+-- >>>>>>>>>> migrations/20261117125809_create_video_library.sql
+-- Biblioteca de vídeos Gumlet do Clube da Ceia Perfeita.
+-- Vídeos publicados são visíveis somente para assinantes com acesso ativo; CRUD é exclusivo de administradores.
+begin;
+create table if not exists public.videos (
+  id uuid primary key default gen_random_uuid(),
+  slug text not null unique,
+  title text not null check (char_length(btrim(title)) between 2 and 160),
+  description text,
+  hls_url text,
+  mp4_url text,
+  thumbnail_url text,
+  duration_seconds integer check (duration_seconds is null or duration_seconds > 0),
+  collection_id uuid references public.collections(id) on delete set null,
+  recipe_id uuid references public.recipes(id) on delete set null,
+  status text not null default 'draft' check (status in ('draft', 'published', 'archived')),
+  position integer not null default 0,
+  created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint videos_has_source check (hls_url is not null or mp4_url is not null),
+  constraint videos_hls_https check (hls_url is null or hls_url ~* '^https://'),
+  constraint videos_mp4_https check (mp4_url is null or mp4_url ~* '^https://'),
+  constraint videos_thumbnail_https check (thumbnail_url is null or thumbnail_url ~* '^https://')
+);
+create index if not exists videos_status_position_idx on public.videos(status, position);
+create index if not exists videos_collection_idx on public.videos(collection_id);
+create index if not exists videos_recipe_idx on public.videos(recipe_id);
+drop trigger if exists set_updated_at on public.videos;
+create trigger set_updated_at before update on public.videos
+  for each row execute function public.set_updated_at();
+alter table public.videos enable row level security;
+revoke all on public.videos from anon, authenticated;
+grant select, insert, update, delete on public.videos to authenticated;
+drop policy if exists "administradores gerenciam videos" on public.videos;
+create policy "administradores gerenciam videos" on public.videos
+  for all to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
+drop policy if exists "assinantes assistem videos publicados" on public.videos;
+create policy "assinantes assistem videos publicados" on public.videos
+  for select to authenticated using (status = 'published' and (select public.has_active_access()));
+insert into public.videos (slug, title, description, hls_url, status, position)
+values ('video-gumlet-demo','Vídeo de demonstração Gumlet','Vídeo inicial fornecido para configurar e testar o player. Revise o título e publique quando estiver pronto.','https://video.gumlet.io/6ad7bb851ab4445ed4e7f416/6ad7c30a1ab4445ed4e82f97/main.m3u8','draft',1)
+on conflict (slug) do nothing;
+commit;
+
+-- >>>>>>>>>> migrations/20261117130443_audit_video_library.sql
+-- Registra no histórico administrativo inclusões, alterações e arquivamentos da biblioteca de vídeos.
+create or replace function public.audit_video_changes()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' then
+    perform public.write_audit_log('videos.created', 'videos', new.id::text, new.title, null, to_jsonb(new));
+    return new;
+  elsif tg_op = 'UPDATE' then
+    perform public.write_audit_log('videos.updated', 'videos', new.id::text, new.title, to_jsonb(old), to_jsonb(new));
+    return new;
+  elsif tg_op = 'DELETE' then
+    perform public.write_audit_log('videos.deleted', 'videos', old.id::text, old.title, to_jsonb(old), null);
+    return old;
+  end if;
+  return null;
+end;
+$$;
+revoke all on function public.audit_video_changes() from public, anon, authenticated;
+drop trigger if exists audit_video_changes on public.videos;
+create trigger audit_video_changes after insert or update or delete on public.videos
+for each row execute function public.audit_video_changes();
+
+-- >>>>>>>>>> migrations/20261117130905_refine_video_rls_and_indexes.sql
+-- Consolida a política de leitura da biblioteca e indexa a chave estrangeira do criador.
+drop policy if exists "administradores gerenciam videos" on public.videos;
+drop policy if exists "assinantes assistem videos publicados" on public.videos;
+create policy "videos para administradores ou assinantes ativos" on public.videos
+for select to authenticated
+using ((select public.is_admin()) or (status = 'published' and (select public.has_active_access())));
+create policy "administradores inserem videos" on public.videos
+for insert to authenticated with check ((select public.is_admin()));
+create policy "administradores atualizam videos" on public.videos
+for update to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
+create policy "administradores removem videos" on public.videos
+for delete to authenticated using ((select public.is_admin()));
+create index if not exists videos_created_by_idx on public.videos(created_by);
 
 -- >>>>>>>>>> seed.sql
 -- =====================================================================
