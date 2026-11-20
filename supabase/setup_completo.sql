@@ -1,9 +1,10 @@
 -- =====================================================================
 -- Clube da Ceia Perfeita — instalação completa do banco (GERADO)
 -- Cole este arquivo inteiro no SQL Editor do Supabase de um projeto NOVO e execute uma vez.
--- Conteúdo: 12 migrations + carga inicial (supabase/seed.sql).
+-- Conteúdo: 18 migrations + carga inicial (supabase/seed.sql).
 -- Para projetos que já rodaram as migrations, execute apenas supabase/seed.sql.
 -- =====================================================================
+
 
 
 -- >>>>>>>>>> migrations/20261111174214_schema.sql
@@ -2021,6 +2022,1485 @@ create policy "administradores acessam texto extraido dos PDFs"
 
 comment on table public.document_extracted_pages is
   'Texto extraído localmente dos PDFs privados para revisão e cadastro administrativo, sem uso de serviços de IA.';
+
+-- >>>>>>>>>> migrations/20261113125253_complete_existing_pdf_recipe_placeholders.sql
+CREATE OR REPLACE FUNCTION public.admin_import_pdf_recipes(p_document_id uuid, p_payload jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_doc public.source_documents%rowtype;
+  v_collection_id uuid;
+  v_collection_name text;
+  v_collection_slug text;
+  v_recipe jsonb;
+  v_ingredient jsonb;
+  v_step jsonb;
+  v_material jsonb;
+  v_recipe_id uuid;
+  v_ingredient_id uuid;
+  v_title text;
+  v_slug text;
+  v_base_slug text;
+  v_name text;
+  v_name_slug text;
+  v_position integer;
+  v_ingredient_position integer;
+  v_step_position integer;
+  v_created integer := 0;
+  v_skipped integer := 0;
+  v_materials integer := 0;
+  v_permission_ok boolean;
+  v_existing_recipe_id uuid;
+  v_existing_recipe_empty boolean;
+begin
+  if not coalesce(public.is_admin(), false) then raise exception 'Apenas administradores podem importar documentos.'; end if;
+  select * into v_doc from public.source_documents where id = p_document_id for update;
+  if not found then raise exception 'Documento não encontrado.'; end if;
+  if v_doc.storage_path is null or v_doc.file_status <> 'stored' then raise exception 'Envie o PDF antes de iniciar a leitura.'; end if;
+  if jsonb_typeof(p_payload->'recipes') <> 'array' then raise exception 'A leitura não retornou uma lista de receitas válida.'; end if;
+
+  v_collection_id := v_doc.collection_id;
+  v_collection_name := nullif(trim(p_payload#>>'{collection,name}'), '');
+  if v_collection_id is null and v_collection_name is not null then
+    v_collection_slug := trim(both '-' from regexp_replace(lower(translate(v_collection_name,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+    if v_collection_slug = '' then v_collection_slug := 'colecao-' || substr(md5(v_collection_name),1,8); end if;
+    insert into public.collections (slug,name,description,experience,position,is_visible)
+    values (v_collection_slug,v_collection_name,nullif(trim(p_payload#>>'{collection,description}'),''),'catalog',coalesce((select max(position)+1 from public.collections),0),true)
+    on conflict (slug) do update set name=excluded.name returning id into v_collection_id;
+    update public.source_documents set collection_id=v_collection_id where id=p_document_id;
+  end if;
+  if v_collection_id is null then raise exception 'Não foi possível identificar a categoria deste PDF.'; end if;
+
+  v_permission_ok := v_doc.commercial_permission = 'confirmed';
+  select coalesce(max(position),0)+1 into v_position from public.recipes where collection_id=v_collection_id;
+
+  for v_recipe in select value from jsonb_array_elements(p_payload->'recipes') loop
+    v_title := nullif(trim(v_recipe->>'title'),'');
+    if v_title is null or jsonb_typeof(v_recipe->'ingredients') <> 'array' or jsonb_array_length(v_recipe->'ingredients')=0 or jsonb_typeof(v_recipe->'steps') <> 'array' or jsonb_array_length(v_recipe->'steps')=0 then
+      v_skipped:=v_skipped+1; continue;
+    end if;
+    v_existing_recipe_id:=null;
+    v_existing_recipe_empty:=false;
+    select id into v_existing_recipe_id
+      from public.recipes
+     where source_document_id=p_document_id
+       and lower(title)=lower(v_title)
+       and status<>'archived'
+     limit 1;
+
+    if v_existing_recipe_id is not null then
+      select
+        status='draft'
+        and content_state='catalogued'
+        and not exists(select 1 from public.recipe_ingredients where recipe_id=v_existing_recipe_id)
+        and not exists(select 1 from public.recipe_steps where recipe_id=v_existing_recipe_id)
+        into v_existing_recipe_empty
+        from public.recipes
+       where id=v_existing_recipe_id;
+
+      if not coalesce(v_existing_recipe_empty,false) then
+        v_skipped:=v_skipped+1;
+        continue;
+      end if;
+
+      -- Completa a ficha vazia já existente, preservando seu ID, slug e posição.
+      v_recipe_id:=v_existing_recipe_id;
+      update public.recipes
+         set original_title=nullif(trim(v_recipe->>'original_title'),''),
+             original_language=coalesce(nullif(v_recipe->>'original_language',''),'pt-BR'),
+             translation_status=case when coalesce(v_recipe->>'original_language','pt-BR')='pt-BR' then 'not_needed' else 'pending' end,
+             description=nullif(trim(v_recipe->>'description'),''),
+             difficulty=case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+             yield_text=nullif(trim(v_recipe->>'yield_text'),''),
+             prep_minutes=nullif(v_recipe->>'prep_minutes','')::integer,
+             cook_minutes=nullif(v_recipe->>'cook_minutes','')::integer,
+             bake_minutes=nullif(v_recipe->>'bake_minutes','')::integer,
+             chill_minutes=nullif(v_recipe->>'chill_minutes','')::integer,
+             rest_minutes=nullif(v_recipe->>'rest_minutes','')::integer,
+             source_page_start=nullif(v_recipe->>'source_page_start','')::integer,
+             source_page_end=nullif(v_recipe->>'source_page_end','')::integer,
+             content_state='structured'
+       where id=v_recipe_id;
+    else
+      v_base_slug:=trim(both '-' from regexp_replace(lower(translate(v_title,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+      if v_base_slug='' then v_base_slug:='receita-'||substr(md5(v_title),1,8); end if;
+      v_slug:=v_base_slug;
+      while exists(select 1 from public.recipes where slug=v_slug) loop v_slug:=v_base_slug||'-'||substr(md5(v_title||clock_timestamp()::text),1,6); end loop;
+
+      insert into public.recipes(slug,collection_id,source_document_id,kind,title,original_title,original_language,translation_status,description,difficulty,yield_text,prep_minutes,cook_minutes,bake_minutes,chill_minutes,rest_minutes,source_page_start,source_page_end,content_state,status,position)
+      values(v_slug,v_collection_id,p_document_id,'recipe',v_title,nullif(trim(v_recipe->>'original_title'),''),coalesce(nullif(v_recipe->>'original_language',''),'pt-BR'),
+        case when coalesce(v_recipe->>'original_language','pt-BR')='pt-BR' then 'not_needed' else 'pending' end,
+        nullif(trim(v_recipe->>'description'),''),case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+        nullif(trim(v_recipe->>'yield_text'),''),nullif(v_recipe->>'prep_minutes','')::integer,nullif(v_recipe->>'cook_minutes','')::integer,
+        nullif(v_recipe->>'bake_minutes','')::integer,nullif(v_recipe->>'chill_minutes','')::integer,nullif(v_recipe->>'rest_minutes','')::integer,
+        nullif(v_recipe->>'source_page_start','')::integer,nullif(v_recipe->>'source_page_end','')::integer,'structured','draft',v_position)
+      returning id into v_recipe_id;
+    end if;
+
+    v_ingredient_position:=0;
+    for v_ingredient in select value from jsonb_array_elements(v_recipe->'ingredients') loop
+      v_name:=nullif(trim(v_ingredient->>'display_name'),'');
+      if v_name is null then continue; end if;
+      v_name_slug:=trim(both '-' from regexp_replace(lower(translate(v_name,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+      if v_name_slug='' then v_name_slug:='ingrediente-'||substr(md5(v_name),1,8); end if;
+      insert into public.ingredients(slug,name) values(v_name_slug,v_name)
+      on conflict(slug) do update set name=excluded.name returning id into v_ingredient_id;
+      v_ingredient_position:=v_ingredient_position+1;
+      insert into public.recipe_ingredients(recipe_id,ingredient_id,position,quantity,quantity_max,unit,quantity_text,display_name,preparation,scaling,is_optional,original_text,source_page,needs_review)
+      values(v_recipe_id,v_ingredient_id,v_ingredient_position,nullif(v_ingredient->>'quantity','')::numeric,nullif(v_ingredient->>'quantity_max','')::numeric,
+        nullif(trim(v_ingredient->>'unit'),''),nullif(trim(v_ingredient->>'quantity_text'),''),v_name,nullif(trim(v_ingredient->>'preparation'),''),'linear',
+        coalesce((v_ingredient->>'is_optional')::boolean,false),coalesce(nullif(trim(v_ingredient->>'original_text'),''),v_name),nullif(v_ingredient->>'source_page','')::integer,false);
+    end loop;
+
+    v_step_position:=0;
+    for v_step in select value from jsonb_array_elements(v_recipe->'steps') loop
+      if nullif(trim(v_step->>'instruction'),'') is null then continue; end if;
+      v_step_position:=v_step_position+1;
+      insert into public.recipe_steps(recipe_id,position,instruction,original_text,tip,source_page,needs_review)
+      values(v_recipe_id,v_step_position,trim(v_step->>'instruction'),nullif(trim(v_step->>'original_text'),''),nullif(trim(v_step->>'tip'),''),nullif(v_step->>'source_page','')::integer,false);
+    end loop;
+
+    if v_ingredient_position=0 or v_step_position=0 then delete from public.recipes where id=v_recipe_id; v_skipped:=v_skipped+1; continue; end if;
+    if v_permission_ok then update public.recipes set status='published',published_at=now() where id=v_recipe_id;
+    else update public.recipes set status='pending_permission' where id=v_recipe_id; end if;
+    v_created:=v_created+1; v_position:=v_position+1;
+  end loop;
+
+  for v_material in select value from jsonb_array_elements(coalesce(p_payload->'support_materials','[]'::jsonb)) loop
+    if nullif(trim(v_material->>'title'),'') is null or nullif(trim(v_material->>'body'),'') is null then continue; end if;
+    insert into public.support_materials(slug,kind,title,body,source_document_id,source_page,position,is_visible)
+    values('pdf-'||substr(md5(p_document_id::text||v_material->>'title'||coalesce(v_material->>'source_page','')),1,20),
+      case when v_material->>'kind' in ('utensilios','ingredientes','dicas','orientacoes') then v_material->>'kind' else 'orientacoes' end,
+      trim(v_material->>'title'),trim(v_material->>'body'),p_document_id,nullif(v_material->>'source_page','')::integer,
+      coalesce((select max(position)+1 from public.support_materials),0),true)
+    on conflict(slug) do nothing;
+    if found then v_materials:=v_materials+1; end if;
+  end loop;
+
+  update public.source_documents set import_notes=concat_ws(E'\n',nullif(import_notes,''),'Leitura automática em '||to_char(now(),'YYYY-MM-DD HH24:MI')||': '||v_created||' receita(s) criada(s), '||v_skipped||' ignorada(s), '||v_materials||' material(is) de apoio.') where id=p_document_id;
+  return jsonb_build_object('created',v_created,'skipped',v_skipped,'support_materials',v_materials,'published',v_permission_ok);
+end;
+$function$
+
+-- >>>>>>>>>> migrations/20261114011648_fix_support_materials_slug_expression.sql
+-- Corrige a precedência dos operadores ao gerar o slug de materiais de apoio.
+-- Sem os parênteses, o PostgreSQL tentava aplicar ->> ao resultado de concatenação.
+CREATE OR REPLACE FUNCTION public.admin_import_pdf_recipes(p_document_id uuid, p_payload jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_doc public.source_documents%rowtype;
+  v_collection_id uuid;
+  v_collection_name text;
+  v_collection_slug text;
+  v_recipe jsonb;
+  v_ingredient jsonb;
+  v_step jsonb;
+  v_material jsonb;
+  v_recipe_id uuid;
+  v_ingredient_id uuid;
+  v_title text;
+  v_slug text;
+  v_base_slug text;
+  v_name text;
+  v_name_slug text;
+  v_position integer;
+  v_ingredient_position integer;
+  v_step_position integer;
+  v_created integer := 0;
+  v_skipped integer := 0;
+  v_materials integer := 0;
+  v_permission_ok boolean;
+  v_existing_recipe_id uuid;
+  v_existing_recipe_empty boolean;
+begin
+  if not coalesce(public.is_admin(), false) then raise exception 'Apenas administradores podem importar documentos.'; end if;
+  select * into v_doc from public.source_documents where id = p_document_id for update;
+  if not found then raise exception 'Documento não encontrado.'; end if;
+  if v_doc.storage_path is null or v_doc.file_status <> 'stored' then raise exception 'Envie o PDF antes de iniciar a leitura.'; end if;
+  if jsonb_typeof(p_payload->'recipes') <> 'array' then raise exception 'A leitura não retornou uma lista de receitas válida.'; end if;
+
+  v_collection_id := v_doc.collection_id;
+  v_collection_name := nullif(trim(p_payload#>>'{collection,name}'), '');
+  if v_collection_id is null and v_collection_name is not null then
+    v_collection_slug := trim(both '-' from regexp_replace(lower(translate(v_collection_name,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+    if v_collection_slug = '' then v_collection_slug := 'colecao-' || substr(md5(v_collection_name),1,8); end if;
+    insert into public.collections (slug,name,description,experience,position,is_visible)
+    values (v_collection_slug,v_collection_name,nullif(trim(p_payload#>>'{collection,description}'),''),'catalog',coalesce((select max(position)+1 from public.collections),0),true)
+    on conflict (slug) do update set name=excluded.name returning id into v_collection_id;
+    update public.source_documents set collection_id=v_collection_id where id=p_document_id;
+  end if;
+  if v_collection_id is null then raise exception 'Não foi possível identificar a categoria deste PDF.'; end if;
+
+  v_permission_ok := v_doc.commercial_permission = 'confirmed';
+  select coalesce(max(position),0)+1 into v_position from public.recipes where collection_id=v_collection_id;
+
+  for v_recipe in select value from jsonb_array_elements(p_payload->'recipes') loop
+    v_title := nullif(trim(v_recipe->>'title'),'');
+    if v_title is null or jsonb_typeof(v_recipe->'ingredients') <> 'array' or jsonb_array_length(v_recipe->'ingredients')=0 or jsonb_typeof(v_recipe->'steps') <> 'array' or jsonb_array_length(v_recipe->'steps')=0 then
+      v_skipped:=v_skipped+1; continue;
+    end if;
+    v_existing_recipe_id:=null;
+    v_existing_recipe_empty:=false;
+    select id into v_existing_recipe_id
+      from public.recipes
+     where source_document_id=p_document_id
+       and lower(title)=lower(v_title)
+       and status<>'archived'
+     limit 1;
+
+    if v_existing_recipe_id is not null then
+      select
+        status='draft'
+        and content_state='catalogued'
+        and not exists(select 1 from public.recipe_ingredients where recipe_id=v_existing_recipe_id)
+        and not exists(select 1 from public.recipe_steps where recipe_id=v_existing_recipe_id)
+        into v_existing_recipe_empty
+        from public.recipes
+       where id=v_existing_recipe_id;
+
+      if not coalesce(v_existing_recipe_empty,false) then
+        v_skipped:=v_skipped+1;
+        continue;
+      end if;
+
+      -- Completa a ficha vazia já existente, preservando seu ID, slug e posição.
+      v_recipe_id:=v_existing_recipe_id;
+      update public.recipes
+         set original_title=nullif(trim(v_recipe->>'original_title'),''),
+             original_language=coalesce(nullif(v_recipe->>'original_language',''),'pt-BR'),
+             translation_status=case when coalesce(v_recipe->>'original_language','pt-BR')='pt-BR' then 'not_needed' else 'pending' end,
+             description=nullif(trim(v_recipe->>'description'),''),
+             difficulty=case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+             yield_text=nullif(trim(v_recipe->>'yield_text'),''),
+             prep_minutes=nullif(v_recipe->>'prep_minutes','')::integer,
+             cook_minutes=nullif(v_recipe->>'cook_minutes','')::integer,
+             bake_minutes=nullif(v_recipe->>'bake_minutes','')::integer,
+             chill_minutes=nullif(v_recipe->>'chill_minutes','')::integer,
+             rest_minutes=nullif(v_recipe->>'rest_minutes','')::integer,
+             source_page_start=nullif(v_recipe->>'source_page_start','')::integer,
+             source_page_end=nullif(v_recipe->>'source_page_end','')::integer,
+             content_state='structured'
+       where id=v_recipe_id;
+    else
+      v_base_slug:=trim(both '-' from regexp_replace(lower(translate(v_title,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+      if v_base_slug='' then v_base_slug:='receita-'||substr(md5(v_title),1,8); end if;
+      v_slug:=v_base_slug;
+      while exists(select 1 from public.recipes where slug=v_slug) loop v_slug:=v_base_slug||'-'||substr(md5(v_title||clock_timestamp()::text),1,6); end loop;
+
+      insert into public.recipes(slug,collection_id,source_document_id,kind,title,original_title,original_language,translation_status,description,difficulty,yield_text,prep_minutes,cook_minutes,bake_minutes,chill_minutes,rest_minutes,source_page_start,source_page_end,content_state,status,position)
+      values(v_slug,v_collection_id,p_document_id,'recipe',v_title,nullif(trim(v_recipe->>'original_title'),''),coalesce(nullif(v_recipe->>'original_language',''),'pt-BR'),
+        case when coalesce(v_recipe->>'original_language','pt-BR')='pt-BR' then 'not_needed' else 'pending' end,
+        nullif(trim(v_recipe->>'description'),''),case when v_recipe->>'difficulty' in ('facil','media','dificil') then v_recipe->>'difficulty' else null end,
+        nullif(trim(v_recipe->>'yield_text'),''),nullif(v_recipe->>'prep_minutes','')::integer,nullif(v_recipe->>'cook_minutes','')::integer,
+        nullif(v_recipe->>'bake_minutes','')::integer,nullif(v_recipe->>'chill_minutes','')::integer,nullif(v_recipe->>'rest_minutes','')::integer,
+        nullif(v_recipe->>'source_page_start','')::integer,nullif(v_recipe->>'source_page_end','')::integer,'structured','draft',v_position)
+      returning id into v_recipe_id;
+    end if;
+
+    v_ingredient_position:=0;
+    for v_ingredient in select value from jsonb_array_elements(v_recipe->'ingredients') loop
+      v_name:=nullif(trim(v_ingredient->>'display_name'),'');
+      if v_name is null then continue; end if;
+      v_name_slug:=trim(both '-' from regexp_replace(lower(translate(v_name,'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')),'[^a-z0-9]+','-','g'));
+      if v_name_slug='' then v_name_slug:='ingrediente-'||substr(md5(v_name),1,8); end if;
+      insert into public.ingredients(slug,name) values(v_name_slug,v_name)
+      on conflict(slug) do update set name=excluded.name returning id into v_ingredient_id;
+      v_ingredient_position:=v_ingredient_position+1;
+      insert into public.recipe_ingredients(recipe_id,ingredient_id,position,quantity,quantity_max,unit,quantity_text,display_name,preparation,scaling,is_optional,original_text,source_page,needs_review)
+      values(v_recipe_id,v_ingredient_id,v_ingredient_position,nullif(v_ingredient->>'quantity','')::numeric,nullif(v_ingredient->>'quantity_max','')::numeric,
+        nullif(trim(v_ingredient->>'unit'),''),nullif(trim(v_ingredient->>'quantity_text'),''),v_name,nullif(trim(v_ingredient->>'preparation'),''),'linear',
+        coalesce((v_ingredient->>'is_optional')::boolean,false),coalesce(nullif(trim(v_ingredient->>'original_text'),''),v_name),nullif(v_ingredient->>'source_page','')::integer,false);
+    end loop;
+
+    v_step_position:=0;
+    for v_step in select value from jsonb_array_elements(v_recipe->'steps') loop
+      if nullif(trim(v_step->>'instruction'),'') is null then continue; end if;
+      v_step_position:=v_step_position+1;
+      insert into public.recipe_steps(recipe_id,position,instruction,original_text,tip,source_page,needs_review)
+      values(v_recipe_id,v_step_position,trim(v_step->>'instruction'),nullif(trim(v_step->>'original_text'),''),nullif(trim(v_step->>'tip'),''),nullif(v_step->>'source_page','')::integer,false);
+    end loop;
+
+    if v_ingredient_position=0 or v_step_position=0 then delete from public.recipes where id=v_recipe_id; v_skipped:=v_skipped+1; continue; end if;
+    if v_permission_ok then update public.recipes set status='published',published_at=now() where id=v_recipe_id;
+    else update public.recipes set status='pending_permission' where id=v_recipe_id; end if;
+    v_created:=v_created+1; v_position:=v_position+1;
+  end loop;
+
+  for v_material in select value from jsonb_array_elements(coalesce(p_payload->'support_materials','[]'::jsonb)) loop
+    if nullif(trim(v_material->>'title'),'') is null or nullif(trim(v_material->>'body'),'') is null then continue; end if;
+    insert into public.support_materials(slug,kind,title,body,source_document_id,source_page,position,is_visible)
+    values('pdf-'||substr(md5(p_document_id::text || (v_material->>'title') || coalesce(v_material->>'source_page','')),1,20),
+      case when v_material->>'kind' in ('utensilios','ingredientes','dicas','orientacoes') then v_material->>'kind' else 'orientacoes' end,
+      trim(v_material->>'title'),trim(v_material->>'body'),p_document_id,nullif(v_material->>'source_page','')::integer,
+      coalesce((select max(position)+1 from public.support_materials),0),true)
+    on conflict(slug) do nothing;
+    if found then v_materials:=v_materials+1; end if;
+  end loop;
+
+  update public.source_documents set import_notes=concat_ws(E'\n',nullif(import_notes,''),'Leitura automática em '||to_char(now(),'YYYY-MM-DD HH24:MI')||': '||v_created||' receita(s) criada(s), '||v_skipped||' ignorada(s), '||v_materials||' material(is) de apoio.') where id=p_document_id;
+  return jsonb_build_object('created',v_created,'skipped',v_skipped,'support_materials',v_materials,'published',v_permission_ok);
+end;
+$function$
+
+-- >>>>>>>>>> migrations/20261114020000_structure_torta_de_chocolate.sql
+-- Registra a estruturação inicial da Torta de Chocolate.
+-- A receita já foi estruturada diretamente no banco; esta migração é idempotente
+-- para manter o mesmo estado em ambientes que ainda não receberam os dados.
+with target as (
+  select id
+  from public.recipes
+  where slug = 'torta-de-chocolate'
+    and source_page_start = 5
+    and source_page_end = 5
+),
+components_to_create(role, title, position) as (
+  values
+    ('massa'::text, 'Massa'::text, 1),
+    ('recheio'::text, 'Recheio'::text, 2),
+    ('cobertura'::text, 'Cobertura'::text, 3)
+),
+inserted as (
+  insert into public.recipe_components
+    (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+  select target.id, spec.role, spec.title, 1, spec.position, 5, 5
+  from target
+  cross join components_to_create spec
+  where not exists (
+    select 1
+    from public.recipe_components existing
+    where existing.recipe_id = target.id
+      and existing.position = spec.position
+  )
+  returning id
+)
+update public.recipe_ingredients ingredient
+set component_id = component.id,
+    updated_at = now()
+from target,
+     public.recipe_components component
+where ingredient.recipe_id = target.id
+  and component.recipe_id = target.id
+  and ingredient.component_id is null
+  and (
+    (component.role = 'massa' and ingredient.position between 1 and 2)
+    or (component.role = 'recheio' and ingredient.position between 3 and 5)
+    or (component.role = 'cobertura' and ingredient.position between 6 and 7)
+  );
+
+with target as (
+  select id
+  from public.recipes
+  where slug = 'torta-de-chocolate'
+    and source_page_start = 5
+    and source_page_end = 5
+)
+update public.recipe_steps step
+set component_id = component.id,
+    updated_at = now()
+from target,
+     public.recipe_components component
+where step.recipe_id = target.id
+  and component.recipe_id = target.id
+  and step.component_id is null
+  and (
+    (component.role = 'massa' and step.position = 1)
+    or (component.role = 'recheio' and step.position between 2 and 3)
+    or (component.role = 'cobertura' and step.position = 4)
+  );
+
+-- >>>>>>>>>> migrations/20261114021500_structure_tortas_components.sql
+-- Estrutura componentes de nove tortas com grupos e instruções explícitos nas páginas de origem.
+-- Idempotente: cria componentes ausentes e só associa registros ainda sem componente.
+begin;
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 6, 6
+from public.recipes rec
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 3;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 6, 6
+from public.recipes rec
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 4 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (4,5);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 6, 6
+from public.recipes rec
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 9 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-banana-e-coco' and rec.source_page_start=6
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (6);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 7, 7
+from public.recipes rec
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme', 1, 2, 7, 7
+from public.recipes rec
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme'
+  and ri.position between 3 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme'
+  and rs.position in (2,3,4);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 7, 7
+from public.recipes rec
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 10 and 13;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-chantilly-com-maracuja' and rec.source_page_start=7
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (5,6);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 8, 8
+from public.recipes rec
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 5;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2,3,6);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 8, 8
+from public.recipes rec
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 6 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (4,5);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 8, 8
+from public.recipes rec
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 9 and 10;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-ameixa-com-nozes' and rec.source_page_start=8
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (7);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 10, 10
+from public.recipes rec
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 10, 10
+from public.recipes rec
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 7;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-doce-de-milho' and rec.source_page_start=10
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (3,4,5);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 12, 12
+from public.recipes rec
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Mousse de mel', 1, 2, 12, 12
+from public.recipes rec
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-mousse-de-mel' and rec.source_page_start=12
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 13, 13
+from public.recipes rec
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio de manga', 1, 2, 13, 13
+from public.recipes rec
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-manga' and rec.source_page_start=13
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (2,3,4,5);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 14, 14
+from public.recipes rec
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 14, 14
+from public.recipes rec
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 7;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de goiabada', 1, 3, 14, 14
+from public.recipes rec
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 8 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-romeu-e-julieta' and rec.source_page_start=14
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (4);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 15, 15
+from public.recipes rec
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio de nozes', 1, 2, 15, 15
+from public.recipes rec
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 8;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (3,4);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de chantilly', 1, 3, 15, 15
+from public.recipes rec
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 9 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-nozes' and rec.source_page_start=15
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (5);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 18, 18
+from public.recipes rec
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=1
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 2;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio de sorvete e café', 1, 2, 18, 18
+from public.recipes rec
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=2
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 3 and 4;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (3,4);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 18, 18
+from public.recipes rec
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and not exists (
+    select 1 from public.recipe_components existing
+    where existing.recipe_id=rec.id and existing.position=3
+  );
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 5 and 5;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-sorvete-de-cafe' and rec.source_page_start=18
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (5);
+
+commit;
+
+-- >>>>>>>>>> migrations/20261114032000_structure_remaining_tortas.sql
+-- Completa a estrutura das tortas restantes com grupos sustentados pelas listas e instruções da apostila.
+-- Torta de Pêra permanece sem divisão: as instruções intercalam massa, recheio e montagem,
+-- e a visualização atual agrupa etapas por componente, o que alteraria a ordem original.
+begin;
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 9, 9
+from public.recipes rec
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 5;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1,2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 9, 9
+from public.recipes rec
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 6 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (4);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 9, 9
+from public.recipes rec
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 10 and 12;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-limao' and rec.source_page_start=9
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (5,6,7);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'creme', 'Creme', 1, 1, 11, 11
+from public.recipes rec
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='creme'
+  and ri.position between 1 and 5;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='creme'
+  and rs.position in (1,2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem', 1, 2, 11, 11
+from public.recipes rec
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='montagem'
+  and ri.position between 6 and 6;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem'
+  and rs.position in (4,5,6);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura de chocolate', 1, 3, 11, 11
+from public.recipes rec
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 7 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (7,8);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'finalizacao', 'Finalização', 1, 4, 11, 11
+from public.recipes rec
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=4);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='finalizacao'
+  and ri.position between 10 and 10;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-holandesa' and rec.source_page_start=11
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='finalizacao'
+  and rs.position in (9);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 1, 16, 16
+from public.recipes rec
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 6;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 2, 16, 16
+from public.recipes rec
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 7 and 11;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (2);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'montagem', 'Montagem', 1, 3, 16, 16
+from public.recipes rec
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-integral' and rec.source_page_start=16
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='montagem'
+  and rs.position in (3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'recheio', 'Recheio', 1, 1, 19, 19
+from public.recipes rec
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=1);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='recheio'
+  and ri.position between 10 and 14;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='recheio'
+  and rs.position in (1);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'massa', 'Massa', 1, 2, 19, 19
+from public.recipes rec
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=2);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='massa'
+  and ri.position between 1 and 6;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='massa'
+  and rs.position in (2,3);
+
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select rec.id, 'cobertura', 'Cobertura', 1, 3, 19, 19
+from public.recipes rec
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and not exists (select 1 from public.recipe_components existing where existing.recipe_id=rec.id and existing.position=3);
+
+update public.recipe_ingredients ri
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and ri.recipe_id=rec.id and ri.component_id is null
+  and rc.role='cobertura'
+  and ri.position between 7 and 9;
+
+update public.recipe_steps rs
+set component_id=rc.id, updated_at=now()
+from public.recipes rec
+join public.recipe_components rc on rc.recipe_id=rec.id
+where rec.slug='torta-de-maca' and rec.source_page_start=19
+  and rs.recipe_id=rec.id and rs.component_id is null
+  and rc.role='cobertura'
+  and rs.position in (4,5);
+
+commit;
+
+-- >>>>>>>>>> migrations/20261114033500_structure_torta_de_pera.sql
+-- Estrutura a Torta de Pêra sem alterar a sequência do preparo.
+-- As etapas intercaladas são separadas em partes sequenciais: massa, recheio,
+-- montagem e finalização. Os ingredientes são mantidos em suas listas originais.
+begin;
+
+insert into public.recipe_components
+  (recipe_id, role, title, multiplier, position, source_page_start, source_page_end)
+select r.id, v.role, v.title, 1, v.position, 17, 17
+from public.recipes r
+cross join (values
+  ('massa'::text,'Massa'::text,1),
+  ('recheio'::text,'Recheio de pera'::text,2),
+  ('montagem'::text,'Montagem'::text,3),
+  ('finalizacao'::text,'Finalização'::text,4)
+) v(role,title,position)
+where r.slug='torta-de-pera' and r.source_page_start=17
+  and not exists (
+    select 1 from public.recipe_components rc
+    where rc.recipe_id=r.id and rc.position=v.position
+  );
+
+update public.recipe_ingredients i
+set component_id=rc.id, updated_at=now()
+from public.recipes r
+join public.recipe_components rc on rc.recipe_id=r.id
+where r.slug='torta-de-pera' and r.source_page_start=17
+  and i.recipe_id=r.id and i.component_id is null
+  and (
+    (rc.role='massa' and i.position between 1 and 5)
+    or (rc.role='finalizacao' and i.position between 6 and 8)
+    or (rc.role='recheio' and i.position between 9 and 15)
+  );
+
+update public.recipe_steps s
+set component_id=rc.id, updated_at=now()
+from public.recipes r
+join public.recipe_components rc on rc.recipe_id=r.id
+where r.slug='torta-de-pera' and r.source_page_start=17
+  and s.recipe_id=r.id and s.component_id is null
+  and (
+    (rc.role='massa' and s.position=1)
+    or (rc.role='recheio' and s.position in (2,3))
+    or (rc.role='montagem' and s.position in (4,5))
+    or (rc.role='finalizacao' and s.position=6)
+  );
+
+commit;
 
 -- >>>>>>>>>> migrations/20261118125500_pdf_import_requires_human_review.sql
 -- Novas receitas importadas por IA nunca entram diretamente publicadas.
