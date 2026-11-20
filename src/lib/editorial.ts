@@ -1,5 +1,5 @@
 /**
- * Fluxo editorial simplificado: receitas completas podem ser disponibilizadas diretamente.
+ * Valida as transições editoriais antes de aprovar ou publicar uma receita.
  */
 import type { Recipe, RecipeStatus } from './types';
 
@@ -20,11 +20,30 @@ export interface TransitionContext {
 
 export function checkRecipeTransition(recipe: Recipe, next: RecipeStatus, ctx: TransitionContext): Partial<Recipe> {
   const patch: Partial<Recipe> = { status: next };
-  if (next === 'published') patch.published_at = recipe.published_at ?? ctx.now;
+
+  // Pendências editoriais relevantes precisam ser resolvidas antes da aprovação/publicação.
+  if ((next === 'approved' || next === 'published') && ctx.openFlags > 0) {
+    throw new AppError('FLAGS_PENDING', 'Resolva os pontos de revisão antes de continuar.');
+  }
+
+  if (next === 'published') {
+    if (recipe.status !== 'approved' || !recipe.reviewed_at) {
+      throw new AppError('APPROVAL_REQUIRED', 'A receita precisa ser aprovada antes da publicação.');
+    }
+    if (ctx.permission !== 'confirmed') {
+      throw new AppError('PERMISSION_REQUIRED', 'Confirme a permissão comercial da fonte antes da publicação.');
+    }
+    if (ctx.linkedUnpublished > 0) {
+      throw new AppError('LINKED_RECIPE_UNPUBLISHED', 'Publique ou remova as partes vinculadas que ainda não estão publicadas.');
+    }
+    patch.published_at = recipe.published_at ?? ctx.now;
+  }
+
   if (next === 'approved') {
     patch.reviewed_at = ctx.now;
     patch.reviewed_by = ctx.userId ?? recipe.reviewed_by;
   }
+
   return patch;
 }
 
@@ -70,4 +89,8 @@ const FRIENDLY: Record<string, string> = {
   FORBIDDEN: 'Você não tem permissão para esta ação.',
   NOT_AUTHENTICATED: 'Entre na sua conta para continuar.',
   ACCESS_REQUIRED: 'Este recurso faz parte do acesso da temporada.',
+  FLAGS_PENDING: 'Resolva os pontos de revisão antes de continuar.',
+  APPROVAL_REQUIRED: 'A receita precisa ser aprovada antes da publicação.',
+  PERMISSION_REQUIRED: 'Confirme a permissão comercial da fonte antes da publicação.',
+  LINKED_RECIPE_UNPUBLISHED: 'Publique ou remova as partes vinculadas que ainda não estão publicadas.',
 };
