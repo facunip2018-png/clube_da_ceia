@@ -52,14 +52,16 @@ export function assembleRecipeDetail(
     // Parte compartilhada: usa ingredientes e etapas do componente vinculado, na proporção indicada.
     const sourceRecipeId = component.linked_recipe_id ?? recipe.id;
     const linked = Boolean(component.linked_recipe_id);
+    // A parte sintética "Preparo principal" representa as linhas legadas com component_id NULL.
+    const expectedComponentId = component.id === `direct-${recipe.id}` ? null : component.id;
     const ingredients = rows.ingredients
-      .filter((i) => (linked ? i.recipe_id === sourceRecipeId : i.recipe_id === recipe.id && i.component_id === component.id))
+      .filter((i) => (linked ? i.recipe_id === sourceRecipeId : i.recipe_id === recipe.id && i.component_id === expectedComponentId))
       .sort(byPosition)
       .map((i) => (linked && component.multiplier !== 1 && i.quantity != null && i.scaling !== 'fixed'
         ? { ...i, quantity: i.quantity * component.multiplier, quantity_max: i.quantity_max != null ? i.quantity_max * component.multiplier : null }
         : i));
     const steps = rows.steps
-      .filter((s) => (linked ? s.recipe_id === sourceRecipeId : s.recipe_id === recipe.id && s.component_id === component.id))
+      .filter((s) => (linked ? s.recipe_id === sourceRecipeId : s.recipe_id === recipe.id && s.component_id === expectedComponentId))
       .sort(byPosition)
       .map((step) => ({
         ...step,
