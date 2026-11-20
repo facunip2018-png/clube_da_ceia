@@ -304,7 +304,7 @@ export default function AdminRecipeEditor() {
               <Notice>Esta receita está bloqueada até a permissão comercial do documento ser confirmada em <Link href="/admin/documentos"><b>Documentos</b></Link>.</Notice>
             ) : (
               <div className="row">
-                {statusActions(recipe.status).map((action) => (
+                {statusActions(recipe.status, Boolean(recipe.reviewed_at)).map((action) => (
                   <button key={action.to} type="button" className={`btn sm ${action.tone === 'primary' ? 'primary' : action.tone === 'danger' ? 'danger' : 'outline'}`}
                     onClick={() => act(() => store.update('recipes', { id: recipe.id }, { status: action.to }), { tables: [...TABLES], success: `Situação: ${action.label}` })}>
                     {action.label}
@@ -318,7 +318,7 @@ export default function AdminRecipeEditor() {
               </p>
             )}
           </section>
-  
+
           <section className="panel">
             <div className="eyebrow">Revisão humana</div>
             <h2 style={{ margin: '6px 0 14px' }}>Pontos de revisão</h2>
