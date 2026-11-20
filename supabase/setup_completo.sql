@@ -1661,7 +1661,7 @@ create policy "capas: administradores listam"
   on storage.objects for select to authenticated
   using (bucket_id = 'recipe-images' and (select public.is_admin()));
 
--- >>>>>>>>>> migrations/20261118134000_pdf_import_requires_human_review.sql
+-- >>>>>>>>>> migrations/20261118125500_pdf_import_requires_human_review.sql
 -- Novas receitas importadas por IA nunca entram diretamente publicadas.
 -- Com permissão comercial confirmada, aguardam revisão humana; sem permissão,
 -- permanecem em pending_permission. Nenhuma ficha existente é reclassificada.
