@@ -43,9 +43,17 @@ jobs:
         # O package-lock atual ainda não registra pdf-lib e suas dependências transitivas.
         # npm install resolve o manifesto e atualiza o lock no runner para executar as verificações.
         run: npm install --no-audit --no-fund
+      - name: Gerar arquivos derivados do conteúdo versionado
+        run: npm run content:build
       - name: Verificar tipos
         run: npm run typecheck
       - name: Executar testes automatizados
         run: npm test
       - name: Validar conteúdo gerado
         run: npm run content:check
+      - name: Disponibilizar setup SQL gerado para conferência
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-completo-gerado
+          path: supabase/setup_completo.sql
+          if-no-files-found: error
