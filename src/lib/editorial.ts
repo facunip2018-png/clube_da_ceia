@@ -21,13 +21,13 @@ export interface TransitionContext {
 export function checkRecipeTransition(recipe: Recipe, next: RecipeStatus, ctx: TransitionContext): Partial<Recipe> {
   const patch: Partial<Recipe> = { status: next };
 
-  // Pendências editoriais relevantes precisam ser resolvidas antes da aprovação/publicação.
   if ((next === 'approved' || next === 'published') && ctx.openFlags > 0) {
     throw new AppError('FLAGS_PENDING', 'Resolva os pontos de revisão antes de continuar.');
   }
 
   if (next === 'published') {
-    if (recipe.status !== 'approved' || !recipe.reviewed_at) {
+    // Receitas arquivadas podem voltar ao ar sem nova aprovação quando já foram revisadas.
+    if (!recipe.reviewed_at) {
       throw new AppError('APPROVAL_REQUIRED', 'A receita precisa ser aprovada antes da publicação.');
     }
     if (ctx.permission !== 'confirmed') {
@@ -40,8 +40,8 @@ export function checkRecipeTransition(recipe: Recipe, next: RecipeStatus, ctx: T
   }
 
   if (next === 'approved') {
-    patch.reviewed_at = ctx.now;
-    patch.reviewed_by = ctx.userId ?? recipe.reviewed_by;
+    patch.reviewed_at = recipe.reviewed_at ?? ctx.now;
+    patch.reviewed_by = recipe.reviewed_by ?? ctx.userId;
   }
 
   return patch;
@@ -53,16 +53,21 @@ export interface StatusAction {
   tone: 'primary' | 'default' | 'danger';
 }
 
-export function statusActions(status: RecipeStatus): StatusAction[] {
+export function statusActions(status: RecipeStatus, alreadyReviewed = false): StatusAction[] {
+  const approve = (label = 'Aprovar para publicação'): StatusAction => ({ to: 'approved', label, tone: 'primary' });
+  const publish = (label = 'Disponibilizar aos assinantes'): StatusAction => ({ to: 'published', label, tone: 'primary' });
+  const archive: StatusAction = { to: 'archived', label: 'Arquivar', tone: 'default' };
+
   switch (status) {
     case 'draft':
     case 'review':
+      return [approve(), archive];
     case 'approved':
-      return [{ to: 'published', label: 'Disponibilizar aos assinantes', tone: 'primary' }, { to: 'archived', label: 'Arquivar', tone: 'default' }];
+      return [publish(), archive];
     case 'published':
       return [{ to: 'archived', label: 'Retirar da biblioteca', tone: 'danger' }];
     case 'archived':
-      return [{ to: 'published', label: 'Disponibilizar aos assinantes', tone: 'primary' }];
+      return alreadyReviewed ? [publish('Republicar aos assinantes'), archive] : [approve('Revisar antes de republicar')];
     default:
       return [];
   }
@@ -73,7 +78,7 @@ export function toAppError(error: unknown): AppError {
   if (error instanceof AppError) return error;
   const raw = error as { message?: string; code?: string } | null;
   const message = raw?.message ?? String(error);
-  const tagged = message.match(/^([A-Z][A-Z_]+):\\s*(.*)$/s);
+  const tagged = message.match(/^([A-Z][A-Z_]+):\s*(.*)$/s);
   if (tagged) return new AppError(tagged[1], tagged[2] ? tagged[2].charAt(0).toLocaleUpperCase('pt-BR') + tagged[2].slice(1) : tagged[1]);
   if (/^[A-Z][A-Z_]+$/.test(message)) return new AppError(message, FRIENDLY[message] ?? message);
   const code = raw?.code ?? '';
